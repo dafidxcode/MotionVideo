@@ -1,0 +1,56 @@
+# Dependencies
+/node_modules
+/.pnp
+.pnp.js
+
+# Testing
+/coverage
+
+# Next.js build
+/.next/
+/out/
+
+# Production build
+/build
+/dist
+
+# Remotion & Media artifacts
+.remotion/
+renders/
+out/
+*.mp4
+*.webm
+*.mov
+/public/voiceovers/*.mp3
+/public/voiceovers/*.wav
+!/public/voiceovers/.gitkeep
+
+# Environment variables & secrets (MUST NOT BE COMMITTED)
+.env
+.env*.local
+.env.development
+.env.test
+.env.production
+!.env.example
+
+# Debug logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# Vercel
+.vercel
+
+# TypeScript & cache
+*.tsbuildinfo
+next-env.d.ts
+
+# OS & IDE files
+.DS_Store
+Thumbs.db
+*.pem
+.idea/
+.vscode/
+*.swp
+*.swo

@@ -25,7 +25,6 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { CaptionWord } from "@/remotion/AnimatedCaptions";
 import {
   VOICE_LANGUAGES,
-  VOICE_MODELS,
   isVoiceEngineId,
   isVoiceLanguageCode,
   type VoiceEngineId,
@@ -165,9 +164,7 @@ export function VoiceoverModal({
   const [language, setLanguage] = useState<VoiceLanguageCode>(() =>
     isVoiceLanguageCode(initialLanguage) ? initialLanguage : "en",
   );
-  const [voiceModel, setVoiceModel] = useState<VoiceEngineId>(() =>
-    isVoiceEngineId(initialVoiceModel) ? initialVoiceModel : "auto",
-  );
+  const voiceModel: VoiceEngineId = isVoiceEngineId(initialVoiceModel) ? initialVoiceModel : "auto";
   const [selectedVoice, setSelectedVoice] = useState(initialVoice);
   const [voices, setVoices] = useState<VoiceOption[]>([]);
   const [voicesLoading, setVoicesLoading] = useState(false);
@@ -203,7 +200,7 @@ export function VoiceoverModal({
         );
       })
       .catch(() => {
-        if (!cancelled) setVoicesWarning("Could not load HeyGen voices.");
+        if (!cancelled) setVoicesWarning("Could not load SwdVoice catalog.");
       })
       .finally(() => {
         if (!cancelled) setVoicesLoading(false);
@@ -344,7 +341,7 @@ export function VoiceoverModal({
         <DialogHeader>
           <div className="flex items-center gap-2 text-primary font-semibold text-lg">
             <Mic className="w-5 h-5" />
-            <DialogTitle>HeyGen Voiceover & Auto-Captions</DialogTitle>
+            <DialogTitle>SwdVoice & Auto-Captions</DialogTitle>
           </div>
           <DialogDescription className="text-muted-foreground text-xs leading-relaxed">
             Generate professional voiceover narration and kinetic word-level subtitles synchronized with animation.
@@ -376,69 +373,49 @@ export function VoiceoverModal({
               rows={4}
               value={script}
               onChange={(e) => setScript(e.target.value)}
-              placeholder="Enter the voiceover narration script to be spoken by HeyGen TTS..."
+              placeholder="Enter the voiceover narration script to be spoken by SwdVoice..."
               className="w-full p-3 rounded-lg border border-border bg-input text-foreground text-sm font-sans focus:outline-none focus:border-primary resize-y leading-relaxed"
             />
             <p className="text-[11px] text-muted-foreground-dim">
-              Word-level timestamps come straight from the HeyGen speech API for caption sync.
+              Word-level timestamps come straight from the SwdVoice speech engine for caption sync.
             </p>
           </div>
 
           {/* Language + Voice Model */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <div className="flex flex-col gap-2">
+          {/* Narration Language Selection */}
+          <div className="flex flex-col gap-2">
+            <div className="flex items-center justify-between">
               <label
                 htmlFor="voice-language-select"
                 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground"
               >
-                Narration Language
+                Narration
               </label>
-              <select
-                id="voice-language-select"
-                value={language}
-                onChange={(e) => setLanguage(e.target.value as VoiceLanguageCode)}
-                className="w-full h-9 px-2.5 rounded-lg border border-border bg-input text-foreground text-xs font-sans focus:outline-none focus:border-primary cursor-pointer"
-              >
-                {VOICE_LANGUAGES.map((l) => (
-                  <option key={l.id} value={l.id}>
-                    {l.label}
-                  </option>
-                ))}
-              </select>
             </div>
-
-            <div className="flex flex-col gap-2">
-              <label
-                htmlFor="voice-model-select"
-                className="text-xs font-semibold uppercase tracking-wider text-muted-foreground"
-              >
-                Voice Model
-              </label>
-              <select
-                id="voice-model-select"
-                value={voiceModel}
-                onChange={(e) => setVoiceModel(e.target.value as VoiceEngineId)}
-                className="w-full h-9 px-2.5 rounded-lg border border-border bg-input text-foreground text-xs font-sans focus:outline-none focus:border-primary cursor-pointer"
-              >
-                {VOICE_MODELS.map((m) => (
-                  <option key={m.id} value={m.id}>
-                    {m.name}
-                  </option>
-                ))}
-              </select>
-            </div>
+            <select
+              id="voice-language-select"
+              value={language}
+              onChange={(e) => setLanguage(e.target.value as VoiceLanguageCode)}
+              className="w-full h-9 px-2.5 rounded-lg border border-border bg-input text-foreground text-xs font-sans focus:outline-none focus:border-primary cursor-pointer"
+            >
+              {VOICE_LANGUAGES.map((l) => (
+                <option key={l.id} value={l.id}>
+                  {l.label}
+                </option>
+              ))}
+            </select>
           </div>
 
-          {/* HeyGen Voice Selector */}
+          {/* SwdVoice Voice Selector */}
           <div className="flex flex-col gap-2">
             <label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-              HeyGen Voice ({visibleVoices.length} available)
+              SwdVoice ({visibleVoices.length} available)
             </label>
             {voicesLoading ? (
-              <p className="text-[11px] text-muted-foreground">Loading HeyGen voices…</p>
+              <p className="text-[11px] text-muted-foreground">Loading SwdVoice catalog…</p>
             ) : visibleVoices.length === 0 ? (
               <p className="text-[11px] text-amber-500">
-                {voicesWarning ?? "No HeyGen voices available for this language."}
+                {voicesWarning ?? "No SwdVoice voices available for this language."}
               </p>
             ) : (
               <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 max-h-56 overflow-y-auto">
@@ -450,26 +427,29 @@ export function VoiceoverModal({
                       type="button"
                       onClick={() => setSelectedVoice(v.id)}
                       className={`p-2.5 rounded-lg border text-left transition-all cursor-pointer ${isSelected
-                          ? "border-primary bg-primary/10 shadow-sm"
-                          : "border-border hover:border-border-hover bg-background/50"
+                        ? "border-primary bg-primary/10 shadow-sm"
+                        : "border-border hover:border-border-hover bg-background/50"
                         }`}
                     >
-                      <div className="flex items-center justify-between mb-1 gap-1">
+                      <div className="flex items-center gap-1.5">
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img
+                          src={VOICE_LANGUAGES.find((l) => l.id === language)?.flagUrl}
+                          alt=""
+                          className="w-3.5 h-3.5 object-contain rounded-xs shrink-0"
+                        />
                         <span className="text-xs font-semibold text-foreground truncate">
                           {v.name}
                         </span>
                         <span
-                          className={`text-[9px] px-1.5 py-0.5 rounded shrink-0 ${isSelected
-                              ? "bg-primary text-black font-semibold"
-                              : "bg-background-elevated text-muted-foreground"
+                          className={`text-[9px] px-1.5 py-0.5 rounded ml-auto shrink-0 ${isSelected
+                            ? "bg-primary text-black font-semibold"
+                            : "bg-background-elevated text-muted-foreground"
                             }`}
                         >
                           {v.tag}
                         </span>
                       </div>
-                      <p className="text-[10px] text-muted-foreground leading-snug line-clamp-2">
-                        {v.desc}
-                      </p>
                     </button>
                   );
                 })}
@@ -636,8 +616,8 @@ export function VoiceoverModal({
               onClick={handleApplyToVideo}
               disabled={applied}
               className={`sm:w-auto w-full transition-all cursor-pointer ${applied
-                  ? "bg-emerald-600 hover:bg-emerald-600 text-white"
-                  : "bg-emerald-500 hover:bg-emerald-600 text-white"
+                ? "bg-emerald-600 hover:bg-emerald-600 text-white"
+                : "bg-emerald-500 hover:bg-emerald-600 text-white"
                 }`}
             >
               {applied ? (

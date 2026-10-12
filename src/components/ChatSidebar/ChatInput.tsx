@@ -104,11 +104,11 @@ export function ChatInput({
   const canCapture = Component && !isLoading && !isCapturing && canAddMore;
 
   return (
-    <div className="px-4 pt-4 pb-4">
+    <div className="p-3 border-t border-[#28282C] bg-[#18181B] shrink-0">
       <form onSubmit={handleSubmit}>
         <div
-          className={`bg-background-elevated rounded-xl border p-3 transition-colors ${
-            isDragging ? "border-blue-500 bg-blue-500/10" : "border-border"
+          className={`bg-[#1F1F23] rounded-xl border p-3 transition-colors ${
+            isDragging ? "border-amber-400 bg-amber-500/10" : "border-[#28282C] hover:border-[#38383E]"
           }`}
           onDragOver={handleDragOver}
           onDragLeave={handleDragLeave}
@@ -135,19 +135,19 @@ export function ChatInput({
                     <img
                       src={img}
                       alt={`Attached ${index + 1}`}
-                      className="h-16 w-16 rounded border border-border object-cover"
+                      className="h-16 w-16 rounded border border-[#28282C] object-cover"
                     />
                     <button
                       type="button"
                       onClick={() => removeImage(index)}
-                      className="absolute -top-1.5 -right-1.5 bg-background border border-border rounded-full p-0.5 hover:bg-destructive hover:text-destructive-foreground transition-colors"
+                      className="absolute -top-1.5 -right-1.5 bg-[#0A0A0B] border border-[#28282C] rounded-full p-0.5 hover:bg-red-500 hover:text-white transition-colors cursor-pointer"
                     >
                       <X className="w-3 h-3" />
                     </button>
                   </div>
                 ))}
               </div>
-              <p className="text-[10px] text-muted-foreground-dim mt-1">
+              <p className="text-[10px] text-[#6E6E76] mt-1">
                 Images & video frames for reference only (all models support
                 text / image / video), they cannot be embedded in the
                 animation
@@ -165,7 +165,7 @@ export function ChatInput({
                 ? "Drop images or video here..."
                 : "Tune your animation... (paste/drop images or video)"
             }
-            className="w-full bg-transparent text-foreground placeholder:text-muted-foreground-dim focus:outline-none resize-none text-sm min-h-[36px] max-h-[120px]"
+            className="w-full bg-transparent text-[#F5F5F7] placeholder:text-[#6E6E76] focus:outline-none resize-none text-sm min-h-[36px] max-h-[120px]"
             style={{ fieldSizing: "content" } as React.CSSProperties}
             disabled={isLoading}
           />
@@ -179,22 +179,22 @@ export function ChatInput({
             className="hidden"
           />
 
-          <div className="flex justify-between items-center mt-2 pt-2 border-t border-border/50">
+          <div className="flex justify-between items-center mt-2 pt-2 border-t border-[#28282C]">
             <Select
               value={model}
               onValueChange={(value) => onModelChange(value as ModelId)}
               disabled={isLoading}
             >
-              <SelectTrigger className="max-w-[140px] bg-transparent border-none text-muted-foreground hover:text-foreground transition-colors text-xs h-7 px-2 truncate">
+              <SelectTrigger className="max-w-[140px] bg-transparent border-none text-[#9A9AA2] hover:text-[#F5F5F7] transition-colors text-xs h-7 px-2 truncate cursor-pointer">
                 <SelectValue className="truncate" />
               </SelectTrigger>
-              <SelectContent className="bg-background-elevated border-border">
+              <SelectContent className="bg-[#18181B] border-[#28282C] text-[#F5F5F7]">
                 {MODELS.map((m) => (
                   <SelectItem
                     key={m.id}
                     value={m.id}
                     title={`${m.description} • Supports: ${m.modalities.join("/")}`}
-                    className="text-foreground focus:bg-secondary focus:text-foreground text-xs"
+                    className="text-[#F5F5F7] focus:bg-[#1F1F23] focus:text-white text-xs cursor-pointer"
                   >
                     {m.name}
                   </SelectItem>
@@ -209,7 +209,7 @@ export function ChatInput({
                 size="icon-sm"
                 onClick={() => fileInputRef.current?.click()}
                 disabled={isLoading || !canAddMore}
-                className="text-muted-foreground hover:text-foreground h-7 w-7"
+                className="text-[#9A9AA2] hover:text-[#F5F5F7] hover:bg-[#26262B] h-7 w-7 rounded-lg cursor-pointer"
                 title="Attach images or video (video auto-extracted to frames)"
               >
                 <Paperclip className="w-4 h-4" />
@@ -221,7 +221,7 @@ export function ChatInput({
                 size="sm"
                 disabled={!canCapture}
                 onClick={handleCapture}
-                className="text-muted-foreground hover:text-foreground h-7 px-2 text-xs"
+                className="text-[#9A9AA2] hover:text-[#F5F5F7] hover:bg-[#26262B] h-7 px-2 text-xs rounded-lg cursor-pointer"
                 title="Use current frame of Preview as image in chat"
               >
                 <Camera className="w-3.5 h-3.5 mr-1" />
@@ -233,7 +233,7 @@ export function ChatInput({
                 size="icon-sm"
                 disabled={!prompt.trim() || isLoading}
                 loading={isLoading}
-                className="bg-foreground text-background hover:bg-gray-200 h-7 w-7 ml-1"
+                className="bg-[#F5F5F7] text-black hover:bg-neutral-200 h-7 w-7 ml-1 rounded-lg cursor-pointer"
               >
                 <ArrowUp className="w-4 h-4" />
               </Button>

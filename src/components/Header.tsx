@@ -14,7 +14,7 @@ export function Header({ asLink = false }: HeaderProps) {
         className="w-7 h-7 sm:w-9 sm:h-9 object-contain"
       />
       <span className="text-base sm:text-xl font-bold text-white font-sans tracking-tight">
-        Swdbot - Motion Studio
+        Swdbot Motion
       </span>
     </div>
   );

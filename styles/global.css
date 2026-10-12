@@ -1,42 +1,47 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap');
 @import "tailwindcss";
 @import "tw-animate-css";
 
 :root {
-  --unfocused-border-color: #333;
+  --unfocused-border-color: #28282C;
 
-  --geist-border-radius: 5px;
+  --geist-border-radius: 6px;
   --geist-quarter-pad: 6px;
   --geist-half-pad: 12px;
   --geist-pad: 24px;
-  --geist-font: "Inter";
+  --geist-font: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, system-ui, sans-serif;
 
-  --geist-error: #dc2626;
+  --geist-error: #ef4444;
 
-  --radius: 0.625rem;
+  --radius: 0.75rem;
 
-  /* Dark theme colors */
-  --background: #0a0a0a;
-  --background-elevated: #1a1a1a;
-  --background-editor: #1e1e1e;
-  --background-editor-header: #2d2d2d;
-  --background-error: #2a1a1a;
-  --foreground: #ffffff;
-  --primary: #0B84F3;
-  --primary-hover: #0a75d9;
+  /* Swdbot Davinci Theme Colors */
+  --background: #0A0A0B;
+  --background-sidebar: #0D0D0F;
+  --background-elevated: #18181B;
+  --background-surface: #18181B;
+  --background-surface-raised: #1F1F23;
+  --background-surface-hover: #26262B;
+  --background-editor: #111113;
+  --background-editor-header: #18181B;
+  --background-error: #281414;
+  --foreground: #F5F5F7;
+  --primary: #3B82F6;
+  --primary-hover: #2563EB;
   --primary-foreground: #ffffff;
-  --secondary: #333;
-  --secondary-foreground: #ffffff;
-  --muted: #111;
-  --muted-foreground: #888;
-  --muted-foreground-dim: #666;
-  --accent: #2a2a2a;
-  --accent-foreground: #ffffff;
-  --destructive: #dc2626;
-  --destructive-foreground: #f87171;
-  --border: #333;
-  --border-dim: #222;
-  --input: #0f0f0f;
-  --ring: #333;
+  --secondary: #1F1F23;
+  --secondary-foreground: #F5F5F7;
+  --muted: #101012;
+  --muted-foreground: #9A9AA2;
+  --muted-foreground-dim: #6E6E76;
+  --accent: #1F1F23;
+  --accent-foreground: #F5F5F7;
+  --destructive: #EF4444;
+  --destructive-foreground: #F87171;
+  --border: #28282C;
+  --border-dim: #1F1F23;
+  --input: #101012;
+  --ring: #3B82F6;
 }
 
 @theme {
@@ -71,10 +76,26 @@
   }
 }
 
-body {
+html, body {
   margin: 0;
   padding: 0;
-  overflow: hidden;
+  min-height: 100%;
+}
+
+/* Sleek dark scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: #0A0A0B;
+}
+::-webkit-scrollbar-thumb {
+  background: #28282C;
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #3E3E44;
 }
 
 @theme inline {
@@ -112,5 +133,6 @@ body {
   }
   body {
     @apply bg-background text-foreground;
+    font-family: var(--geist-font);
   }
 }

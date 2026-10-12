@@ -30,14 +30,14 @@ const MAX_CORRECTION_ATTEMPTS = 3;
 function GeneratePageContent() {
   const searchParams = useSearchParams();
   const initialPrompt = searchParams.get("prompt") || "";
-  const initialLanguage = searchParams.get("language") || "en";
+  const initialLanguage = searchParams.get("language") || "ms";
   const initialVoiceModel = searchParams.get("voiceModel") || "auto";
   const initialVoice = searchParams.get("voice") || "";
   const initialAutoCaption = searchParams.get("autoCaption") !== "false";
+  const initialProjectId = searchParams.get("projectId") || null;
 
-  // If we have an initial prompt from URL, start in streaming state
-  // so syntax highlighting is disabled from the beginning
-  const willAutoStart = Boolean(initialPrompt);
+  const [projectId, setProjectId] = useState<string | null>(initialProjectId);
+  const [renderedVideoUrl, setRenderedVideoUrl] = useState<string | null>(null);
 
   const initialDurationParam = searchParams.get("duration");
   const initialFpsParam = searchParams.get("fps");
@@ -52,10 +52,8 @@ function GeneratePageContent() {
   );
   const autoVoiceoverAppliedRef = useRef(false);
   const [currentFrame, setCurrentFrame] = useState(0);
-  const [isStreaming, setIsStreaming] = useState(willAutoStart);
-  const [streamPhase, setStreamPhase] = useState<StreamPhase>(
-    willAutoStart ? "reasoning" : "idle",
-  );
+  const [isStreaming, setIsStreaming] = useState(false);
+  const [streamPhase, setStreamPhase] = useState<StreamPhase>("idle");
   const [prompt, setPrompt] = useState(initialPrompt);
   const [hasAutoStarted, setHasAutoStarted] = useState(false);
   const [hasGeneratedOnce, setHasGeneratedOnce] = useState(false);
@@ -79,6 +77,7 @@ function GeneratePageContent() {
     addAssistantMessage,
     addErrorMessage,
     markManualEdit,
+    loadConversationMessages,
     getFullContext,
     getPreviouslyUsedSkills,
     getLastUserAttachedImages,
@@ -159,6 +158,72 @@ function GeneratePageContent() {
     }
   }, [isStreaming, compileCode, markAsAiGenerated]);
 
+  // Load saved project from history if projectId is in query param
+  useEffect(() => {
+    if (!initialProjectId) return;
+    let isMounted = true;
+    async function loadProject() {
+      try {
+        const res = await fetch(`/api/projects?id=${encodeURIComponent(initialProjectId!)}`);
+        if (res.ok) {
+          const data = await res.json();
+          if (data.project && isMounted) {
+            const p = data.project;
+            setProjectId(p.id);
+            if (p.prompt) setPrompt(p.prompt);
+            if (p.durationInFrames) setDurationInFrames(p.durationInFrames);
+            if (p.fps) setFps(p.fps);
+            if (p.code) {
+              setCode(p.code);
+              compileCode(p.code);
+              setHasGeneratedOnce(true);
+            }
+          }
+        }
+      } catch (err) {
+        console.error("Failed to load project:", err);
+      }
+    }
+    loadProject();
+    return () => {
+      isMounted = false;
+    };
+  }, [initialProjectId, setCode, compileCode]);
+
+  const saveProjectState = useCallback(
+    async (codeToSave: string, promptText?: string) => {
+      try {
+        const currentId =
+          projectId || `proj_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+        if (!projectId) {
+          setProjectId(currentId);
+          if (typeof window !== "undefined") {
+            const url = new URL(window.location.href);
+            url.searchParams.set("projectId", currentId);
+            window.history.replaceState({}, "", url.toString());
+          }
+        }
+
+        await fetch("/api/projects", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            id: currentId,
+            title: (promptText || prompt || "Untitled Motion").slice(0, 45).replace(/\n/g, " "),
+            prompt: promptText || prompt || "Motion Graphics Animation",
+            code: codeToSave,
+            durationInFrames,
+            fps,
+            conversationHistory: getFullContext(),
+          }),
+        });
+      } catch (err) {
+        console.warn("Auto-save project error:", err);
+      }
+    },
+    [projectId, prompt, durationInFrames, fps, getFullContext],
+  );
+
   const handleCodeChange = useCallback(
     (newCode: string) => {
       setCode(newCode);
@@ -183,9 +248,10 @@ function GeneratePageContent() {
       // Set new debounce
       debounceRef.current = setTimeout(() => {
         compileCode(newCode);
+        saveProjectState(newCode);
       }, 500);
     },
-    [setCode, compileCode, markManualEdit, markAsUserEdited],
+    [setCode, compileCode, markManualEdit, markAsUserEdited, saveProjectState],
   );
 
   // Handle message sent for history
@@ -203,6 +269,7 @@ function GeneratePageContent() {
         summary || "Generated your animation, any follow up edits?";
       addAssistantMessage(content, generatedCode, metadata);
       markAsAiGenerated();
+      saveProjectState(generatedCode);
 
       // Automatically synthesize the HeyGen voiceover and captions on first generation
       if (!autoVoiceoverAppliedRef.current && initialVoice) {
@@ -250,9 +317,9 @@ function GeneratePageContent() {
                 }
 
                 const engineLabel =
-                  data.engine && data.engine !== "auto" ? data.engine : "HeyGen";
+                  data.engine && data.engine !== "auto" ? data.engine : "SwdVoice";
                 addAssistantMessage(
-                  `🎙️ **Voiceover & Captions Ready!**\nAuto-applied HeyGen TTS (${engineLabel}) with ${initialAutoCaption ? "word-level synced captions" : "clean audio narration"}. You can preview the complete video now or customize anything below.`,
+                  `🎙️ **Voiceover & Captions Ready!**\nAuto-applied SwdVoice (${engineLabel}) with ${initialAutoCaption ? "word-level synced captions" : "clean audio narration"}. You can preview the complete video now or customize anything below.`,
                   completeCode,
                 );
               }
@@ -319,38 +386,124 @@ function GeneratePageContent() {
     setRuntimeError(errorMessage);
   }, []);
 
-  // Auto-trigger generation if prompt came from URL
+  // Check for pending generation from Landing Page or load existing project from history/refresh
   useEffect(() => {
-    if (initialPrompt && !hasAutoStarted && chatSidebarRef.current) {
-      setHasAutoStarted(true);
-      // Check for initial attached images from sessionStorage
-      const storedImagesJson = sessionStorage.getItem("initialAttachedImages");
-      let storedImages: string[] | undefined;
-      if (storedImagesJson) {
-        try {
-          storedImages = JSON.parse(storedImagesJson);
-        } catch {
-          // Ignore parse errors
+    if (hasAutoStarted) return;
+
+    // A. Check for fresh generation payload stored in sessionStorage (clean URL transition)
+    const pendingJson = typeof window !== "undefined" ? sessionStorage.getItem("pending_generation") : null;
+    if (pendingJson) {
+      try {
+        const pending = JSON.parse(pendingJson);
+        sessionStorage.removeItem("pending_generation");
+        setHasAutoStarted(true);
+
+        const targetId = pending.projectId || projectId || `proj_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+        setProjectId(targetId);
+
+        // Instantly clean the browser URL so prompt text is NEVER displayed or stored in history/refresh
+        if (typeof window !== "undefined") {
+          window.history.replaceState({}, "", `/generate?projectId=${encodeURIComponent(targetId)}`);
         }
-        sessionStorage.removeItem("initialAttachedImages");
+
+        if (pending.duration) setDurationInFrames(pending.duration);
+        if (pending.fps) setFps(pending.fps);
+        setPrompt(pending.prompt);
+        setIsStreaming(true);
+        setStreamPhase("reasoning");
+
+        setTimeout(() => {
+          chatSidebarRef.current?.triggerGeneration({
+            attachedImages: pending.attachedImages,
+            language: pending.language || initialLanguage,
+            voice: pending.voice || initialVoice,
+            voiceModel: pending.voiceModel || initialVoiceModel,
+            autoCaption: pending.autoCaption ?? initialAutoCaption,
+            duration: pending.duration || durationInFrames,
+            fps: pending.fps || fps,
+          });
+        }, 150);
+        return;
+      } catch (err) {
+        console.warn("Failed to parse pending generation:", err);
       }
+    }
+
+    // B. Legacy URL fallback: If user opened a URL containing ?prompt=, clean it immediately!
+    if (initialPrompt && typeof window !== "undefined") {
+      const cleanUrl = projectId || initialProjectId
+        ? `/generate?projectId=${encodeURIComponent((projectId || initialProjectId)!)}`
+        : `/generate`;
+      window.history.replaceState({}, "", cleanUrl);
+    }
+
+    // C. If projectId is present and NO fresh generation pending: LOAD EXISTING PROJECT (Refresh or History Modal)
+    const targetProjectId = projectId || initialProjectId;
+    if (targetProjectId) {
+      setHasAutoStarted(true);
+      setIsStreaming(false);
+      setStreamPhase("idle");
+
+      fetch(`/api/projects?id=${encodeURIComponent(targetProjectId)}`)
+        .then((res) => (res.ok ? res.json() : null))
+        .then((data) => {
+          if (data?.success && data?.project) {
+            const p = data.project;
+            if (p.code) {
+              setCode(p.code);
+              compileCode(p.code);
+              setHasGeneratedOnce(true);
+            }
+            if (p.durationInFrames) setDurationInFrames(p.durationInFrames);
+            if (p.fps) setFps(p.fps);
+            if (p.prompt) setPrompt(p.prompt);
+            if (p.renderUrl) setRenderedVideoUrl(p.renderUrl);
+
+            // Restore complete conversation history & logs
+            if (Array.isArray(p.conversationHistory) && p.conversationHistory.length > 0) {
+              loadConversationMessages(p.conversationHistory);
+            }
+          }
+        })
+        .catch((err) => console.warn("Failed to load project from history:", err));
+      return;
+    }
+
+    // D. Fallback if initialPrompt was provided via direct link without projectId:
+    if (initialPrompt && chatSidebarRef.current) {
+      setHasAutoStarted(true);
       setTimeout(() => {
         chatSidebarRef.current?.triggerGeneration({
-          attachedImages: storedImages,
           language: initialLanguage,
           voice: initialVoice,
           voiceModel: initialVoiceModel,
           autoCaption: initialAutoCaption,
+          duration: durationInFrames,
+          fps,
         });
       }, 100);
     }
-  }, [initialPrompt, hasAutoStarted, initialLanguage, initialVoice, initialVoiceModel, initialAutoCaption]);
+  }, [
+    hasAutoStarted,
+    initialPrompt,
+    projectId,
+    initialProjectId,
+    initialLanguage,
+    initialVoice,
+    initialVoiceModel,
+    initialAutoCaption,
+    durationInFrames,
+    fps,
+    compileCode,
+    setCode,
+    loadConversationMessages,
+  ]);
 
   return (
     <PageLayout showLogoAsLink>
       {/* Mobile View Switcher (Visible on mobile/tablet < 1000px, hidden on desktop >= 1000px) */}
-      <div className="flex min-[1000px]:hidden items-center justify-between px-3 py-2 bg-neutral-900/90 border-b border-white/10 shrink-0">
-        <div className="flex items-center gap-1 bg-neutral-800/90 p-1 rounded-xl border border-white/10 w-full">
+      <div className="flex min-[1000px]:hidden items-center justify-between px-3 py-2 bg-[#18181B] border-b border-[#28282C] shrink-0">
+        <div className="flex items-center gap-1 bg-[#1F1F23] p-1 rounded-xl border border-[#28282C] w-full">
           <button
             type="button"
             onClick={() => setMobileView("preview")}
@@ -358,7 +511,7 @@ function GeneratePageContent() {
               "flex-1 flex items-center justify-center gap-1.5 py-1.5 px-2 rounded-lg text-xs font-semibold transition-all cursor-pointer",
               mobileView === "preview"
                 ? "bg-amber-400 text-black shadow-md shadow-amber-400/20"
-                : "text-neutral-400 hover:text-white",
+                : "text-[#9A9AA2] hover:text-white",
             )}
           >
             <span>Output</span>
@@ -370,7 +523,7 @@ function GeneratePageContent() {
               "flex-1 flex items-center justify-center gap-1.5 py-1.5 px-2 rounded-lg text-xs font-semibold transition-all cursor-pointer relative",
               mobileView === "chat"
                 ? "bg-amber-400 text-black shadow-md shadow-amber-400/20"
-                : "text-neutral-400 hover:text-white",
+                : "text-[#9A9AA2] hover:text-white",
             )}
           >
             <span>Agent</span>
@@ -385,7 +538,7 @@ function GeneratePageContent() {
               "flex-1 flex items-center justify-center gap-1.5 py-1.5 px-2 rounded-lg text-xs font-semibold transition-all cursor-pointer",
               mobileView === "code"
                 ? "bg-amber-400 text-black shadow-md shadow-amber-400/20"
-                : "text-neutral-400 hover:text-white",
+                : "text-[#9A9AA2] hover:text-white",
             )}
           >
             <span>Code</span>
@@ -393,11 +546,14 @@ function GeneratePageContent() {
         </div>
       </div>
 
-      <div className="flex-1 flex flex-col min-[1000px]:flex-row min-w-0 overflow-hidden">
-        {/* Chat History Sidebar */}
+      <div className="flex-1 flex flex-col min-[1000px]:flex-row min-w-0 overflow-hidden px-3 sm:px-6 min-[1000px]:px-12 pb-4 sm:pb-8 gap-4 min-[1000px]:gap-6 font-sans">
+        {/* Chat History Sidebar: 1/3 of the layout on desktop (or collapsed) */}
         <div
           className={cn(
-            "h-full min-[1000px]:flex flex-col",
+            "h-full flex flex-col transition-all duration-300 min-w-0",
+            isSidebarCollapsed
+              ? "min-[1000px]:w-14 shrink-0"
+              : "w-full min-[1000px]:w-[calc(33.333%-1rem)] shrink-0",
             mobileView === "chat" ? "flex flex-1" : "hidden min-[1000px]:flex",
           )}
         >
@@ -433,10 +589,10 @@ function GeneratePageContent() {
           />
         </div>
 
-        {/* Main content area */}
+        {/* Main content area: 2/3 of the layout on desktop */}
         <div
           className={cn(
-            "flex-1 flex flex-col min-w-0 px-3 sm:px-6 min-[1000px]:pl-0 min-[1000px]:pr-12 pb-4 sm:pb-8 overflow-hidden",
+            "flex-1 flex flex-col min-w-0 overflow-hidden transition-all duration-300",
             mobileView !== "chat" ? "flex" : "hidden min-[1000px]:flex",
           )}
         >
@@ -454,10 +610,27 @@ function GeneratePageContent() {
             }
             previewContent={
               <div className="flex flex-col h-full min-h-0 overflow-y-auto min-[1000px]:overflow-hidden [scrollbar-width:none]">
+                {renderedVideoUrl && (
+                  <div className="flex items-center justify-between px-3.5 py-2 mb-2.5 rounded-xl bg-emerald-500/10 border border-emerald-500/25 text-emerald-300 text-xs shrink-0">
+                    <div className="flex items-center gap-2">
+                      <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                      <span className="font-semibold">Rendered MP4 Ready</span>
+                      <span className="text-[10px] text-emerald-400/70 font-mono">(24h auto-clean)</span>
+                    </div>
+                    <a
+                      href={renderedVideoUrl}
+                      download={`motion-${projectId || "video"}.mp4`}
+                      className="px-3 py-1 rounded-lg bg-emerald-500/20 hover:bg-emerald-500/30 font-semibold text-emerald-200 transition-colors"
+                    >
+                      Download MP4
+                    </a>
+                  </div>
+                )}
                 <AnimationPlayer
                   Component={generationError ? null : Component}
                   durationInFrames={durationInFrames}
                   fps={fps}
+                  projectId={projectId ?? undefined}
                   onDurationChange={setDurationInFrames}
                   onFpsChange={setFps}
                   isCompiling={isCompiling}
@@ -474,12 +647,12 @@ function GeneratePageContent() {
                   initialAutoCaption={initialAutoCaption}
                 />
                 {/* Mobile Quick Revise Banner */}
-                <div className="flex min-[1000px]:hidden items-center justify-between mt-3 p-3 rounded-xl bg-neutral-900/90 border border-white/10 shrink-0">
+                <div className="flex min-[1000px]:hidden items-center justify-between mt-3 p-3 rounded-xl bg-[#18181B] border border-[#28282C] shrink-0">
                   <div className="flex flex-col">
-                    <span className="text-xs font-semibold text-white">
+                    <span className="text-xs font-semibold text-[#F5F5F7]">
                       Need changes or edits?
                     </span>
-                    <span className="text-[11px] text-neutral-400">
+                    <span className="text-[11px] text-[#9A9AA2]">
                       Ask assistant to adjust timing, colors, or script
                     </span>
                   </div>

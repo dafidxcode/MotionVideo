@@ -3,11 +3,13 @@ import { CompositionProps } from "./constants";
 
 export const RenderRequest = z.object({
   inputProps: CompositionProps,
+  projectId: z.string().optional(),
 });
 
 export const ProgressRequest = z.object({
   bucketName: z.string(),
   id: z.string(),
+  projectId: z.string().optional(),
 });
 
 export type ProgressResponse =

@@ -14,26 +14,27 @@ import { useImageAttachments } from "@/hooks/useImageAttachments";
 import { MODELS, type ModelId } from "@/types/generation";
 import {
   VOICE_LANGUAGES,
-  VOICE_MODELS,
   type VoiceEngineId,
   type VoiceLanguageCode,
   type VoiceOption,
 } from "@/types/voice";
 import { BANG_MOTION_STYLES } from "@/data/bangMotionStyles";
+import { EXAMPLE_PROMPTS } from "@/data/examplePrompts";
 import { cn } from "@/lib/utils";
 import {
   ArrowRight,
   ArrowUp,
-  AudioLines,
+  Check,
   Clock,
+  Film,
   Globe,
   Loader2,
   Mic,
   Paperclip,
   Play,
   SlidersHorizontal,
-  Sparkles,
   Subtitles,
+  Volume2,
   X,
 } from "lucide-react";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -54,11 +55,11 @@ export interface VoiceCatalogPayload {
 }
 
 export const DURATION_OPTIONS = [
-  { value: "300", label: "10 seconds" },
-  { value: "600", label: "20 seconds" },
-  { value: "900", label: "30 seconds" },
-  { value: "1800", label: "1 minute" },
-  { value: "3600", label: "2 minutes" },
+  { value: "300", label: "10 seconds", seconds: 10, credits: 2 },
+  { value: "600", label: "20 seconds", seconds: 20, credits: 4 },
+  { value: "900", label: "30 seconds", seconds: 30, credits: 6 },
+  { value: "1800", label: "1 minute", seconds: 60, credits: 12 },
+  { value: "3600", label: "2 minutes", seconds: 120, credits: 24 },
 ];
 
 interface LandingPageInputProps {
@@ -85,9 +86,10 @@ export function LandingPageInput({
 }: LandingPageInputProps) {
   const [prompt, setPrompt] = useState("");
   const [selectedStyleId, setSelectedStyleId] = useState<string | null>(null);
+  const [selectedExampleId, setSelectedExampleId] = useState<string>("");
   const [model, setModel] = useState<ModelId>(MODELS[0].id);
-  const [language, setLanguage] = useState<LanguageCode>("en");
-  const [voiceModel, setVoiceModel] = useState<VoiceEngineId>("auto");
+  const [language, setLanguage] = useState<LanguageCode>("ms");
+  const voiceModel: VoiceEngineId = "auto";
   const [voice, setVoice] = useState<string>("");
   const [autoCaption, setAutoCaption] = useState<boolean>(true);
   const [durationInFrames, setDurationInFrames] = useState<number>(300);
@@ -98,27 +100,33 @@ export function LandingPageInput({
   const [catalog, setCatalog] = useState<VoiceCatalogPayload | null>(null);
   const [isCatalogLoading, setIsCatalogLoading] = useState<boolean>(false);
   const [catalogError, setCatalogError] = useState<string | null>(null);
+  const catalogCacheRef = useRef<Record<string, VoiceCatalogPayload>>({});
 
   const activeStyle = BANG_MOTION_STYLES.find((s) => s.id === selectedStyleId);
+  const selectedExample = EXAMPLE_PROMPTS.find(
+    (p) => p.id === selectedExampleId,
+  );
 
   const currentLang =
     LANGUAGE_OPTIONS.find((l) => l.id === language) || LANGUAGE_OPTIONS[0];
-
-  const currentVoiceModel =
-    VOICE_MODELS.find((m) => m.id === voiceModel) || VOICE_MODELS[0];
 
   const currentDuration =
     DURATION_OPTIONS.find((d) => d.value === String(durationInFrames)) ||
     DURATION_OPTIONS[0];
 
-  // Load the language-scoped HeyGen catalog.
+  // Load the language-scoped voice catalog with instant client-side caching.
   const loadVoiceCatalog = useCallback(async (lang: LanguageCode) => {
+    if (catalogCacheRef.current[lang]) {
+      setCatalog(catalogCacheRef.current[lang]);
+      return;
+    }
     setIsCatalogLoading(true);
     setCatalogError(null);
     try {
       const res = await fetch(`/api/voices?language=${lang}`);
       if (!res.ok) throw new Error(`Voice catalog failed (${res.status})`);
       const data = (await res.json()) as VoiceCatalogPayload;
+      catalogCacheRef.current[lang] = data;
       setCatalog(data);
     } catch (err) {
       setCatalog(null);
@@ -134,18 +142,20 @@ export function LandingPageInput({
     void loadVoiceCatalog(language);
   }, [language, loadVoiceCatalog]);
 
-  // HeyGen reports which engines each voice can speak; filter the list so the
-  // dropdown only offers voices the selected model can actually render.
+  // Curate to top 25 high-quality voices strictly matching selected language
   const availableVoices: VoiceOption[] = useMemo(() => {
-    const all = catalog?.voices ?? [];
-    if (voiceModel === "auto") return all;
-    const matched = all.filter(
-      (v) => !v.engines || v.engines.length === 0 || v.engines.includes(voiceModel),
-    );
-    return matched.length > 0 ? matched : all;
-  }, [catalog?.voices, voiceModel]);
+    if (!catalog || catalog.language !== language) return [];
+    const all = catalog.voices.filter((v) => v.language === language);
+    if (all.length <= 25) return all;
+    const top = all.slice(0, 25);
+    if (voice && !top.some((v) => v.id === voice)) {
+      const current = all.find((v) => v.id === voice);
+      if (current) top.push(current);
+    }
+    return top;
+  }, [catalog, language, voice]);
 
-  // Keep the selection valid whenever the language or model changes.
+  // Keep the selection valid whenever the language or voices change.
   useEffect(() => {
     if (availableVoices.length === 0) {
       if (voice !== "") setVoice("");
@@ -161,23 +171,56 @@ export function LandingPageInput({
   const catalogWarningForUser = catalogError ?? catalogWarning;
 
   const previewAudioRef = useRef<HTMLAudioElement | null>(null);
-  const handlePreview = (voiceOption: VoiceOption) => {
+  const [playingVoiceId, setPlayingVoiceId] = useState<string | null>(null);
+
+  const handlePreview = (voiceOption: VoiceOption, e?: React.SyntheticEvent) => {
+    if (e) {
+      e.stopPropagation();
+      e.preventDefault();
+    }
     if (!voiceOption.previewUrl) return;
+
     if (previewAudioRef.current) {
       previewAudioRef.current.pause();
+      if (playingVoiceId === voiceOption.id) {
+        previewAudioRef.current = null;
+        setPlayingVoiceId(null);
+        return;
+      }
       previewAudioRef.current = null;
     }
-    const audio = new Audio(voiceOption.previewUrl);
-    previewAudioRef.current = audio;
-    void audio.play().catch(() => {
-      setCatalogError("Preview playback was blocked by the browser.");
-    });
+
+    try {
+      const audio = new Audio(voiceOption.previewUrl);
+      previewAudioRef.current = audio;
+      setPlayingVoiceId(voiceOption.id);
+
+      const playPromise = audio.play();
+      if (playPromise !== undefined) {
+        playPromise.catch((err) => {
+          console.warn("Audio playback aborted or prevented:", err);
+          setPlayingVoiceId(null);
+        });
+      }
+
+      audio.onended = () => {
+        setPlayingVoiceId(null);
+      };
+      audio.onerror = () => {
+        setPlayingVoiceId(null);
+      };
+    } catch (err) {
+      console.warn("Failed to play audio preview:", err);
+      setPlayingVoiceId(null);
+    }
   };
 
   useEffect(() => {
     return () => {
-      previewAudioRef.current?.pause();
-      previewAudioRef.current = null;
+      if (previewAudioRef.current) {
+        previewAudioRef.current.pause();
+        previewAudioRef.current = null;
+      }
     };
   }, []);
 
@@ -206,7 +249,7 @@ export function LandingPageInput({
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!prompt.trim() || isNavigating) return;
+    if (!prompt.trim() || !activeStyle || isNavigating) return;
 
     // Embed visual style instructions into prompt sent to AI Agent
     // WITHOUT touching or mutating the user's typed prompt in the input textarea!
@@ -279,10 +322,18 @@ export function LandingPageInput({
     await handleDrop(e);
   };
 
+  const handleSelectExamplePrompt = useCallback((exampleId: string) => {
+    const ex = EXAMPLE_PROMPTS.find((p) => p.id === exampleId);
+    if (!ex) return;
+    setSelectedExampleId(exampleId);
+    setPrompt(ex.prompt);
+    setSelectedStyleId(ex.styleId);
+  }, []);
+
   return (
-    <div className="flex-1 flex flex-col lg:flex-row gap-4 lg:gap-8 px-3 sm:px-6 lg:px-12 pb-4 sm:pb-8 min-h-0 overflow-hidden">
+    <div className="flex-1 grid grid-cols-1 lg:grid-cols-12 gap-5 lg:gap-6 px-3 sm:px-6 lg:px-12 pb-4 sm:pb-8 min-h-0 overflow-hidden font-sans">
       {/* Mobile Tab Switcher (Visible on mobile/tablet, hidden on lg desktop) */}
-      <div className="flex lg:hidden items-center p-1 bg-neutral-900/90 rounded-xl border border-white/10 shrink-0">
+      <div className="col-span-12 flex lg:hidden items-center p-1 bg-[#18181B] rounded-xl border border-[#28282C] shrink-0">
         <button
           type="button"
           onClick={() => setMobileTab("prompt")}
@@ -290,7 +341,7 @@ export function LandingPageInput({
             "flex-1 flex items-center justify-center gap-2 py-2 px-3 rounded-lg text-xs font-semibold transition-all cursor-pointer",
             mobileTab === "prompt"
               ? "bg-amber-400 text-black shadow-md shadow-amber-400/20"
-              : "text-neutral-400 hover:text-white"
+              : "text-[#9A9AA2] hover:text-white"
           )}
         >
           <span>Settings</span>
@@ -302,27 +353,27 @@ export function LandingPageInput({
             "flex-1 flex items-center justify-center gap-2 py-2 px-3 rounded-lg text-xs font-semibold transition-all cursor-pointer",
             mobileTab === "styles"
               ? "bg-amber-400 text-black shadow-md shadow-amber-400/20"
-              : "text-neutral-400 hover:text-white"
+              : "text-[#9A9AA2] hover:text-white"
           )}
         >
           <span>Styles</span>
         </button>
       </div>
 
-      {/* Left Column: Prompt Input & Controls */}
+      {/* Left Column: Prompt Input & Controls (1/3 of the layout on desktop) */}
       <div
         className={cn(
-          "w-full lg:w-[460px] xl:w-[500px] flex flex-col justify-between shrink-0 h-full overflow-y-auto [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden",
+          "col-span-12 lg:col-span-4 flex flex-col justify-between h-full overflow-y-auto pr-1.5 pb-20 [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:bg-[#2E2E34] hover:[&::-webkit-scrollbar-thumb]:bg-[#404048] [&::-webkit-scrollbar-thumb]:rounded-full min-w-0",
           mobileTab !== "prompt" && "hidden lg:flex"
         )}
       >
         <div>
           {/* Header Title */}
           <div className="mb-4 lg:mb-5">
-            <h1 className="text-2xl sm:text-3xl lg:text-4xl font-extrabold text-white tracking-tight leading-tight mb-2">
+            <h1 className="text-2xl sm:text-3xl lg:text-4xl font-extrabold text-[#F5F5F7] tracking-tight leading-tight mb-2">
               What do you want to create?
             </h1>
-            <p className="text-xs sm:text-sm text-neutral-400 leading-relaxed">
+            <p className="text-xs sm:text-sm text-[#9A9AA2] leading-relaxed">
               Enter your story idea or pick a style from the gallery. AI will craft a cinematic motion graphics video following Bang Motion&apos;s Anti-PPT principles.
             </p>
           </div>
@@ -331,11 +382,11 @@ export function LandingPageInput({
 
             {/* Prompt Textarea Card */}
             <div
-              className={`relative bg-neutral-900/90 rounded-2xl border p-4 transition-all shadow-xl ${isStyleDraggingOver
-                  ? "border-amber-400 bg-amber-500/15 ring-2 ring-amber-400/40"
-                  : isDragging
-                    ? "border-amber-400 bg-amber-500/10"
-                    : "border-white/10 hover:border-white/20"
+              className={`relative bg-[#18181B] rounded-2xl border p-4 transition-all shadow-xl ${isStyleDraggingOver
+                ? "border-amber-400 bg-amber-500/15 ring-2 ring-amber-400/40"
+                : isDragging
+                  ? "border-amber-400 bg-amber-500/10"
+                  : "border-[#28282C] hover:border-[#38383E]"
                 }`}
               onDragOver={handleCustomDragOver}
               onDragLeave={handleCustomDragLeave}
@@ -344,7 +395,7 @@ export function LandingPageInput({
               {/* Drop style overlay for desktop */}
               {isStyleDraggingOver && (
                 <div className="absolute inset-0 z-20 flex flex-col items-center justify-center bg-neutral-950/90 backdrop-blur-sm rounded-2xl border-2 border-dashed border-amber-400 text-amber-300 p-4 pointer-events-none animate-in fade-in zoom-in-95">
-                  <Sparkles className="w-7 h-7 text-amber-400 mb-1.5 animate-bounce" />
+                  <Film className="w-7 h-7 text-amber-400 mb-1.5 animate-bounce" />
                   <span className="font-bold text-sm text-white">
                     Drop to Apply Motion Style
                   </span>
@@ -370,7 +421,10 @@ export function LandingPageInput({
                   </div>
                   <button
                     type="button"
-                    onClick={() => setSelectedStyleId(null)}
+                    onClick={() => {
+                      setSelectedStyleId(null);
+                      setSelectedExampleId("");
+                    }}
                     className="text-neutral-400 hover:text-white hover:bg-white/10 p-1 rounded-md transition-colors cursor-pointer shrink-0"
                     title="Remove style"
                   >
@@ -422,8 +476,8 @@ export function LandingPageInput({
                     ? "Drop images or video here..."
                     : "Describe your motion graphics prompt or story idea... (images/video supported)"
                 }
-                rows={6}
-                className="w-full bg-transparent text-white placeholder:text-neutral-500 focus:outline-none resize-none text-sm leading-relaxed [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden"
+                rows={3}
+                className="w-full bg-transparent text-[#F5F5F7] placeholder:text-[#6E6E76] focus:outline-none resize-none text-sm leading-relaxed min-h-[76px] [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden"
                 disabled={isNavigating}
               />
 
@@ -437,22 +491,22 @@ export function LandingPageInput({
                 className="hidden"
               />
 
-              <div className="flex justify-between items-center mt-3 pt-3 border-t border-white/10">
+              <div className="flex justify-between items-center mt-3 pt-3 border-t border-[#28282C]">
                 <Select
                   value={model}
                   onValueChange={(value) => setModel(value as ModelId)}
                   disabled={isNavigating}
                 >
-                  <SelectTrigger className="w-auto bg-transparent border-none text-neutral-300 hover:text-white text-xs h-8 px-2 transition-colors cursor-pointer">
+                  <SelectTrigger className="w-auto bg-transparent border-none text-[#9A9AA2] hover:text-[#F5F5F7] text-xs h-8 px-2 transition-colors cursor-pointer">
                     <SelectValue />
                   </SelectTrigger>
-                  <SelectContent className="bg-neutral-900 border-white/10">
+                  <SelectContent className="bg-[#18181B] border-[#28282C] text-[#F5F5F7]">
                     {MODELS.map((m) => (
                       <SelectItem
                         key={m.id}
                         value={m.id}
                         title={`${m.description} • Supports: ${m.modalities.join("/")}`}
-                        className="text-neutral-200 focus:bg-neutral-800 focus:text-white text-xs"
+                        className="text-[#F5F5F7] focus:bg-[#1F1F23] focus:text-white text-xs cursor-pointer"
                       >
                         {m.name}
                       </SelectItem>
@@ -467,7 +521,7 @@ export function LandingPageInput({
                     size="icon-sm"
                     onClick={() => fileInputRef.current?.click()}
                     disabled={isNavigating || !canAddMore}
-                    className="text-neutral-400 hover:text-white h-8 w-8 cursor-pointer"
+                    className="text-[#9A9AA2] hover:text-[#F5F5F7] hover:bg-[#1F1F23] h-8 w-8 cursor-pointer rounded-lg"
                     title="Attach images or video (video auto-extracted to frames)"
                   >
                     <Paperclip className="w-4 h-4" />
@@ -476,9 +530,21 @@ export function LandingPageInput({
                   <Button
                     type="submit"
                     size="icon-sm"
-                    disabled={!prompt.trim() || isNavigating}
+                    disabled={!prompt.trim() || !activeStyle || isNavigating}
                     loading={isNavigating}
-                    className="bg-white text-black hover:bg-neutral-200 h-8 w-8 rounded-lg cursor-pointer"
+                    className={cn(
+                      "h-8 w-8 rounded-lg transition-colors",
+                      !prompt.trim() || !activeStyle
+                        ? "bg-[#28282C] text-[#6E6E76] cursor-not-allowed opacity-40"
+                        : "bg-[#F5F5F7] text-black hover:bg-neutral-200 cursor-pointer"
+                    )}
+                    title={
+                      !activeStyle
+                        ? "Please select a Visual Motion Style first"
+                        : !prompt.trim()
+                          ? "Please enter a prompt"
+                          : "Generate"
+                    }
                   >
                     <ArrowUp className="w-4 h-4" />
                   </Button>
@@ -486,10 +552,91 @@ export function LandingPageInput({
               </div>
             </div>
 
+            {/* Style Prompt Presets Dropdown */}
+            <div className="w-full mt-3 bg-[#18181B] rounded-2xl border border-[#28282C] p-3 flex flex-col gap-2 shadow-xl">
+              <label
+                htmlFor="example-prompt-select"
+                className="text-xs font-semibold text-[#E0E0E6] flex items-center gap-1.5"
+              >
+                <Film className="w-3.5 h-3.5 text-[#9A9AA2]" />
+                <span>Style Presets</span>
+              </label>
+
+              <Select
+                value={selectedExampleId}
+                onValueChange={handleSelectExamplePrompt}
+                disabled={isNavigating}
+              >
+                <SelectTrigger
+                  id="example-prompt-select"
+                  className="w-full bg-[#121214] border border-[#2A2A30] hover:border-[#3E3E48] text-[#F5F5F7] h-12 px-2.5 rounded-xl transition-all cursor-pointer text-xs"
+                >
+                  {selectedExample ? (
+                    <div className="flex items-center gap-2.5 truncate w-full pr-2 text-left">
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img
+                        src={selectedExample.image}
+                        alt=""
+                        className="w-9 h-7 rounded-md object-cover border border-white/10 shrink-0"
+                      />
+                      <div className="flex flex-col min-w-0">
+                        <span className="font-semibold text-xs text-white truncate">
+                          {selectedExample.title}
+                        </span>
+                        <span className="text-[10px] text-[#9A9AA2] truncate">
+                          {selectedExample.styleName}
+                        </span>
+                      </div>
+                    </div>
+                  ) : (
+                    <span className="text-[#8E8E93] text-xs">
+                      Select a visual style preset...
+                    </span>
+                  )}
+                </SelectTrigger>
+                <SelectContent className="bg-[#18181B] border-[#28282C] text-[#F5F5F7] shadow-2xl max-h-80 w-[var(--radix-select-trigger-width)] min-w-[340px]">
+                  {EXAMPLE_PROMPTS.map((ex) => (
+                    <SelectItem
+                      key={ex.id}
+                      value={ex.id}
+                      className="text-[#F5F5F7] focus:bg-[#202025] focus:text-white data-[state=checked]:bg-[#26262D] text-xs cursor-pointer py-2 px-2.5 border-b border-[#24242A] last:border-0"
+                    >
+                      <div className="flex items-center gap-3 w-full text-left pr-1">
+                        {/* Visual Style Banner Thumbnail */}
+                        <div className="relative w-16 h-10 rounded-md overflow-hidden shrink-0 border border-white/10 shadow-sm bg-black/40">
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img
+                            src={ex.image}
+                            alt={ex.styleName}
+                            className="w-full h-full object-cover"
+                          />
+                        </div>
+
+                        {/* Preset Info */}
+                        <div className="flex flex-col min-w-0 flex-1">
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="font-semibold text-xs text-white truncate">
+                              {ex.title}
+                            </span>
+                            <span className="text-[10px] font-medium text-[#A1A1AA] shrink-0">
+                              {ex.styleName}
+                            </span>
+                          </div>
+                          <p className="text-[11px] text-[#71717A] line-clamp-1 mt-0.5">
+                            {ex.prompt}
+                          </p>
+                        </div>
+                      </div>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
             {/* Vertically Ordered Generation Parameters */}
-            <div className="w-full mt-3 bg-neutral-900/90 rounded-2xl border border-white/10 p-4 flex flex-col gap-3 shadow-xl">
-              <div className="flex items-center justify-between pb-2 border-b border-white/10">
-                <span className="text-xs font-bold text-neutral-300 uppercase tracking-wider flex items-center gap-1.5">
+            <div className="w-full mt-3 bg-[#18181B] rounded-2xl border border-[#28282C] p-4 flex flex-col gap-3 shadow-xl">
+              <div className="flex items-center justify-between pb-2 border-b border-[#28282C]">
+                <span className="text-xs font-bold text-[#F5F5F7] uppercase tracking-wider flex items-center gap-1.5">
                   <SlidersHorizontal className="w-3.5 h-3.5 text-amber-400" />
                   Parameters
                 </span>
@@ -499,9 +646,9 @@ export function LandingPageInput({
               <div className="flex flex-col gap-1.5">
                 <label
                   htmlFor="language-select"
-                  className="text-xs font-semibold text-neutral-300 flex items-center gap-1.5"
+                  className="text-xs font-semibold text-[#E0E0E6] flex items-center gap-1.5"
                 >
-                  <Globe className="w-3 h-3 text-neutral-400" />
+                  <Globe className="w-3 h-3 text-[#9A9AA2]" />
                   Language
                 </label>
                 <Select
@@ -513,7 +660,7 @@ export function LandingPageInput({
                 >
                   <SelectTrigger
                     id="language-select"
-                    className="w-full bg-neutral-800/90 border border-white/15 text-white text-xs h-9 px-3 rounded-xl hover:bg-neutral-800 hover:border-white/30 transition-all cursor-pointer"
+                    className="w-full bg-[#1F1F23] border border-[#28282C] text-[#F5F5F7] text-xs h-9 px-3 rounded-xl hover:bg-[#26262B] hover:border-[#38383E] transition-all cursor-pointer"
                   >
                     <div className="flex items-center gap-2">
                       {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -525,12 +672,12 @@ export function LandingPageInput({
                       <span>{currentLang.label}</span>
                     </div>
                   </SelectTrigger>
-                  <SelectContent className="bg-neutral-800 border-white/15 text-white shadow-2xl">
+                  <SelectContent className="bg-[#18181B] border-[#28282C] text-[#F5F5F7] shadow-2xl">
                     {LANGUAGE_OPTIONS.map((lang) => (
                       <SelectItem
                         key={lang.id}
                         value={lang.id}
-                        className="text-neutral-200 focus:bg-neutral-700 focus:text-white text-xs cursor-pointer"
+                        className="text-[#F5F5F7] focus:bg-[#1F1F23] focus:text-white text-xs cursor-pointer"
                       >
                         <div className="flex items-center gap-2">
                           {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -547,68 +694,15 @@ export function LandingPageInput({
                 </Select>
               </div>
 
-              {/* 2. Voice Model Selector (HeyGen speech engine) */}
-              <div className="flex flex-col gap-1.5">
-                <label
-                  htmlFor="voice-model-select"
-                  className="text-xs font-semibold text-neutral-300 flex items-center gap-1.5"
-                >
-                  <AudioLines className="w-3.5 h-3.5 text-neutral-400" />
-                  Voice Model
-                  <span className="text-[10px] font-normal text-neutral-500">
-                    HeyGen
-                  </span>
-                </label>
-                <Select
-                  value={voiceModel}
-                  onValueChange={(val) => setVoiceModel(val as VoiceEngineId)}
-                  disabled={isNavigating}
-                >
-                  <SelectTrigger
-                    id="voice-model-select"
-                    className="w-full bg-neutral-800/90 border border-white/15 text-white text-xs h-9 px-3 rounded-xl hover:bg-neutral-800 hover:border-white/30 transition-all cursor-pointer"
-                  >
-                    <div className="flex items-center gap-2">
-                      <span className="font-semibold">
-                        {currentVoiceModel.name}
-                      </span>
-                      <span className="text-[10px] text-neutral-400">
-                        {currentVoiceModel.model}
-                      </span>
-                    </div>
-                  </SelectTrigger>
-                  <SelectContent className="bg-neutral-800 border-white/15 text-white shadow-2xl">
-                    {VOICE_MODELS.map((m) => (
-                      <SelectItem
-                        key={m.id}
-                        value={m.id}
-                        className="text-neutral-200 focus:bg-neutral-700 focus:text-white text-xs cursor-pointer"
-                      >
-                        <div className="flex flex-col">
-                          <span className="font-semibold">{m.name}</span>
-                          <span className="text-[10px] text-neutral-400">
-                            {m.desc}
-                          </span>
-                        </div>
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-
-              {/* 3. Voice Selector (HeyGen catalog, filtered by language + model) */}
+              {/* 2. Voice Character Selector */}
               <div className="flex flex-col gap-1.5">
                 <label
                   htmlFor="voice-select"
-                  className="text-xs font-semibold text-neutral-300 flex items-center gap-1.5"
+                  className="text-xs font-semibold text-[#E0E0E6] flex items-center justify-between"
                 >
-                  <Mic className="w-3.5 h-3.5 text-neutral-400" />
-                  Voice
-                  <span className="text-[10px] font-normal text-neutral-500">
-                    {currentLang.label} •{" "}
-                    {isCatalogLoading
-                      ? "loading…"
-                      : `${availableVoices.length} available`}
+                  <span className="flex items-center gap-1.5">
+                    <Mic className="w-3.5 h-3.5 text-[#9A9AA2]" />
+                    Voice Character
                   </span>
                 </label>
                 <Select
@@ -618,52 +712,107 @@ export function LandingPageInput({
                 >
                   <SelectTrigger
                     id="voice-select"
-                    className="w-full bg-neutral-800/90 border border-white/15 text-white text-xs h-9 px-3 rounded-xl hover:bg-neutral-800 hover:border-white/30 transition-all cursor-pointer disabled:opacity-50"
+                    className="w-full bg-[#1F1F23] border border-[#28282C] text-[#F5F5F7] text-xs h-9 px-2.5 rounded-xl hover:bg-[#26262B] hover:border-[#38383E] transition-all cursor-pointer disabled:opacity-50"
                   >
                     {isCatalogLoading ? (
                       <div className="flex items-center gap-2">
-                        <Loader2 className="w-3 h-3 animate-spin" />
-                        <span>Loading HeyGen voices…</span>
+                        <Loader2 className="w-3 h-3 animate-spin text-[#0084FF]" />
+                        <span>Loading voices…</span>
                       </div>
                     ) : selectedVoice ? (
-                      <div className="flex items-center gap-2">
-                        <span className="font-semibold">{selectedVoice.name}</span>
-                        <span className="text-[10px] text-neutral-400">
+                      <div className="flex items-center gap-2 min-w-0">
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img
+                          src={currentLang.flagUrl}
+                          alt=""
+                          className="w-4 h-4 object-contain rounded-sm shrink-0"
+                        />
+                        <span className="font-semibold text-xs truncate">
+                          {selectedVoice.name}
+                        </span>
+                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-black/40 border border-white/5 text-[#9A9AA2] shrink-0 font-medium">
                           {selectedVoice.tag}
                         </span>
                       </div>
                     ) : (
-                      <span className="text-neutral-400">
+                      <span className="text-[#9A9AA2]">
                         No voices available
                       </span>
                     )}
                   </SelectTrigger>
-                  <SelectContent className="bg-neutral-800 border-white/15 text-white shadow-2xl max-h-72">
+                  <SelectContent className="bg-[#18181B] border-[#28282C] text-[#F5F5F7] shadow-2xl max-h-72 w-[var(--radix-select-trigger-width)] min-w-[320px]">
                     {availableVoices.length === 0 ? (
-                      <div className="px-2 py-3 text-[11px] text-neutral-400">
+                      <div className="px-3 py-3 text-[11px] text-[#9A9AA2]">
                         {catalogWarningForUser ??
-                          `No HeyGen voices for ${currentLang.label}.`}
+                          `No voices available for ${currentLang.label}.`}
                       </div>
                     ) : (
-                      availableVoices.map((v) => (
-                        <SelectItem
-                          key={v.id}
-                          value={v.id}
-                          className="text-neutral-200 focus:bg-neutral-700 focus:text-white text-xs cursor-pointer"
-                        >
-                          <div className="flex flex-col">
-                            <span className="font-semibold">
-                              {v.name}{" "}
-                              <span className="text-[10px] font-normal text-neutral-400">
+                      availableVoices.map((v) => {
+                        const isSelected = v.id === voice;
+                        return (
+                          <SelectItem
+                            key={v.id}
+                            value={v.id}
+                            hideIndicator
+                            className="text-[#F5F5F7] focus:bg-[#1F1F23] focus:text-white data-[state=checked]:bg-[#26262B] text-xs cursor-pointer py-2 pl-2.5 pr-16 relative w-full"
+                          >
+                            {/* Left: Flag + Voice Name + Gender badge in 1 row */}
+                            <div className="flex items-center gap-2 min-w-0 pr-2">
+                              {/* eslint-disable-next-line @next/next/no-img-element */}
+                              <img
+                                src={currentLang.flagUrl}
+                                alt=""
+                                className="w-4 h-4 object-contain rounded-sm shrink-0"
+                              />
+                              <span className="font-semibold text-xs text-[#F5F5F7] truncate max-w-[185px]">
+                                {v.name}
+                              </span>
+                              <span className="text-[10px] px-1.5 py-0.5 rounded bg-black/40 border border-white/5 text-[#9A9AA2] shrink-0 font-medium">
                                 {v.tag}
                               </span>
-                            </span>
-                            <span className="text-[10px] text-neutral-400">
-                              {v.desc}
-                            </span>
-                          </div>
-                        </SelectItem>
-                      ))
+                            </div>
+
+                            {/* Right: Checkmark if selected */}
+                            {isSelected && (
+                              <span className="absolute right-9 top-1/2 -translate-y-1/2 flex items-center justify-center pointer-events-none">
+                                <Check className="w-3.5 h-3.5 text-[#0084FF]" />
+                              </span>
+                            )}
+
+                            {/* Far Right Edge: Preview Play Button pinned to the right edge */}
+                            {v.previewUrl && (
+                              <button
+                                type="button"
+                                onPointerDown={(e) => {
+                                  e.stopPropagation();
+                                }}
+                                onPointerUp={(e) => {
+                                  e.stopPropagation();
+                                }}
+                                onMouseDown={(e) => {
+                                  e.stopPropagation();
+                                }}
+                                onMouseUp={(e) => {
+                                  e.stopPropagation();
+                                }}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  e.preventDefault();
+                                  handlePreview(v, e);
+                                }}
+                                className="absolute right-2 top-1/2 -translate-y-1/2 z-10 flex items-center justify-center w-6 h-6 rounded hover:bg-white/10 text-neutral-400 hover:text-amber-300 transition-colors shrink-0 cursor-pointer"
+                                title={`Preview sample`}
+                              >
+                                {playingVoiceId === v.id ? (
+                                  <Volume2 className="w-3.5 h-3.5 text-amber-400 animate-pulse" />
+                                ) : (
+                                  <Play className="w-3 h-3 text-neutral-400 hover:text-amber-300 fill-current" />
+                                )}
+                              </button>
+                            )}
+                          </SelectItem>
+                        );
+                      })
                     )}
                   </SelectContent>
                 </Select>
@@ -673,26 +822,15 @@ export function LandingPageInput({
                     {catalogWarningForUser}
                   </p>
                 )}
-
-                {selectedVoice?.previewUrl && (
-                  <button
-                    type="button"
-                    onClick={() => handlePreview(selectedVoice)}
-                    className="self-start inline-flex items-center gap-1.5 text-[11px] font-semibold text-amber-300 hover:text-amber-200 transition-colors cursor-pointer"
-                  >
-                    <Play className="w-3 h-3" />
-                    Preview {selectedVoice.name}
-                  </button>
-                )}
               </div>
 
               {/* 4. Duration Selector */}
               <div className="flex flex-col gap-1.5">
                 <label
                   htmlFor="duration-select"
-                  className="text-xs font-semibold text-neutral-300 flex items-center gap-1.5"
+                  className="text-xs font-semibold text-[#E0E0E6] flex items-center gap-1.5"
                 >
-                  <Clock className="w-3.5 h-3.5 text-neutral-400" />
+                  <Clock className="w-3.5 h-3.5 text-[#9A9AA2]" />
                   Duration
                 </label>
                 <Select
@@ -702,21 +840,27 @@ export function LandingPageInput({
                 >
                   <SelectTrigger
                     id="duration-select"
-                    className="w-full bg-neutral-800/90 border border-white/15 text-white text-xs h-9 px-3 rounded-xl hover:bg-neutral-800 hover:border-white/30 transition-all cursor-pointer"
+                    className="w-full bg-[#1F1F23] border border-[#28282C] text-[#F5F5F7] text-xs h-9 px-3 rounded-xl hover:bg-[#26262B] hover:border-[#38383E] transition-all cursor-pointer"
                   >
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center justify-between w-full pr-1">
                       <span className="font-semibold">{currentDuration.label}</span>
+                      <span className="text-[10px] font-mono font-bold px-1.5 py-0.5 rounded bg-amber-400/15 border border-amber-400/30 text-amber-300">
+                        {currentDuration.credits} Credits
+                      </span>
                     </div>
                   </SelectTrigger>
-                  <SelectContent className="bg-neutral-800 border-white/15 text-white shadow-2xl">
+                  <SelectContent className="bg-[#18181B] border-[#28282C] text-[#F5F5F7] shadow-2xl">
                     {DURATION_OPTIONS.map((d) => (
                       <SelectItem
                         key={d.value}
                         value={d.value}
-                        className="text-neutral-200 focus:bg-neutral-700 focus:text-white text-xs cursor-pointer"
+                        className="text-[#F5F5F7] focus:bg-[#1F1F23] focus:text-white text-xs cursor-pointer py-1.5"
                       >
-                        <div className="flex items-center gap-2">
+                        <div className="flex items-center justify-between w-full pr-1 gap-3">
                           <span className="font-semibold text-white">{d.label}</span>
+                          <span className="text-[10px] font-mono font-bold px-1.5 py-0.5 rounded bg-amber-400/10 border border-amber-400/25 text-amber-300 shrink-0">
+                            {d.credits} Credits
+                          </span>
                         </div>
                       </SelectItem>
                     ))}
@@ -725,14 +869,14 @@ export function LandingPageInput({
               </div>
 
               {/* 5. Auto-Captions Checkbox */}
-              <div className="flex items-center justify-between p-2.5 rounded-xl border border-white/15 bg-neutral-800/90 hover:bg-neutral-800 hover:border-white/30 transition-all">
+              <div className="flex items-center justify-between p-2.5 rounded-xl border border-[#28282C] bg-[#1F1F23] hover:bg-[#26262B] hover:border-[#38383E] transition-all">
                 <label
                   htmlFor="auto-caption-toggle"
                   className="flex items-center gap-2.5 cursor-pointer flex-1"
                 >
                   <Subtitles className="w-4 h-4 text-amber-400 shrink-0" />
                   <div className="flex flex-col">
-                    <span className="text-xs font-semibold text-white">
+                    <span className="text-xs font-semibold text-[#F5F5F7]">
                       Auto-Captions
                     </span>
                   </div>
@@ -749,31 +893,52 @@ export function LandingPageInput({
             </div>
 
             {/* Quick Action Button */}
-            <Button
-              type="submit"
-              disabled={!prompt.trim() || isNavigating}
-              loading={isNavigating}
-              className="w-full mt-3.5 bg-amber-400 hover:bg-amber-300 text-black font-semibold h-11 rounded-xl shadow-lg shadow-amber-400/20 transition-all flex items-center justify-center gap-2 cursor-pointer"
-            >
-              <span>Generate Motion</span>
-              <ArrowRight className="w-4 h-4" />
-            </Button>
+            <div className="flex flex-col gap-2 mt-3.5 pb-6">
+              {!activeStyle && (
+                <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-amber-400/10 border border-amber-400/20 text-amber-300 text-xs animate-in fade-in">
+                  <span>Select a Visual Motion Style to continue</span>
+                </div>
+              )}
+              <Button
+                type="submit"
+                disabled={!prompt.trim() || !activeStyle || isNavigating}
+                loading={isNavigating}
+                className={cn(
+                  "w-full font-semibold h-11 rounded-xl shadow-lg transition-all flex items-center justify-center gap-2",
+                  !prompt.trim() || !activeStyle
+                    ? "bg-[#232326] text-[#71717A] cursor-not-allowed opacity-60 shadow-none border border-[#2E2E34]"
+                    : "bg-amber-400 hover:bg-amber-300 text-black shadow-amber-400/20 cursor-pointer"
+                )}
+              >
+                <span>
+                  {!activeStyle
+                    ? "Select a Style to Generate"
+                    : !prompt.trim()
+                      ? "Enter a Prompt to Generate"
+                      : `Generate Motion (${currentDuration.credits} Credits)`}
+                </span>
+                <ArrowRight className="w-4 h-4" />
+              </Button>
+            </div>
           </form>
         </div>
       </div>
 
-      {/* Right Column: Bang Motion Style Gallery */}
+      {/* Right Column: Bang Motion Style Gallery (2/3 of the layout on desktop) */}
       <div
         className={cn(
-          "flex-1 min-w-0 h-full flex flex-col overflow-hidden",
+          "col-span-12 lg:col-span-8 h-full flex flex-col overflow-hidden min-w-0",
           mobileTab !== "styles" && "hidden lg:flex"
         )}
       >
         <StylePicker
           selectedStyleId={selectedStyleId}
           onSelectStyle={(s) => {
-            // Toggle selection without overwriting user's typed prompt!
-            setSelectedStyleId(selectedStyleId === s.id ? null : s.id);
+            const nextId = selectedStyleId === s.id ? null : s.id;
+            setSelectedStyleId(nextId);
+            if (!nextId) {
+              setSelectedExampleId("");
+            }
             setMobileTab("prompt");
           }}
         />

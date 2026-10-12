@@ -29,9 +29,37 @@ export const POST = executeApi<ProgressResponse, typeof ProgressRequest>(
     }
 
     if (renderProgress.done) {
+      const rawUrl = renderProgress.outputFile as string;
+      const { saveMediaToLocal } = await import("@/lib/localMediaStorage");
+      const localUrl = await saveMediaToLocal(
+        rawUrl,
+        `render_${body.projectId || body.id}.mp4`
+      );
+
+      const cookieHeader = req.headers.get("cookie") || "";
+      let token = "";
+      const match = cookieHeader.match(/swdbot_session=([^;]+)/);
+      if (match) token = match[1];
+      if (token && body.projectId) {
+        const { verifySessionToken } = await import("@/lib/auth");
+        const verified = verifySessionToken(token);
+        if (verified.valid && verified.email) {
+          const { saveUserProject } = await import("@/lib/projects");
+          saveUserProject({
+            id: body.projectId,
+            userEmail: verified.email,
+            code: "",
+            prompt: "",
+            renderStatus: "completed",
+            renderUrl: localUrl,
+            renderSize: renderProgress.outputSizeInBytes as number,
+          }).catch(() => {});
+        }
+      }
+
       return {
         type: "done",
-        url: renderProgress.outputFile as string,
+        url: localUrl,
         size: renderProgress.outputSizeInBytes as number,
       };
     }

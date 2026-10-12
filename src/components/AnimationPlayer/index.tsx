@@ -26,6 +26,7 @@ interface AnimationPlayerProps {
   Component: React.ComponentType | null;
   durationInFrames: number;
   fps: number;
+  projectId?: string;
   onDurationChange?: (duration: number) => void;
   onFpsChange?: (fps: number) => void;
   isCompiling: boolean;
@@ -46,6 +47,7 @@ export const AnimationPlayer: React.FC<AnimationPlayerProps> = ({
   Component,
   durationInFrames,
   fps,
+  projectId,
   isCompiling,
   isStreaming,
   error,
@@ -157,6 +159,7 @@ export const AnimationPlayer: React.FC<AnimationPlayerProps> = ({
             code={code}
             durationInFrames={durationInFrames}
             fps={fps}
+            projectId={projectId}
           />
         </div>
       </>

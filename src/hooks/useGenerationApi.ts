@@ -68,6 +68,8 @@ interface UseGenerationApiReturn {
       voice?: string;
       voiceModel?: string;
       autoCaption?: boolean;
+      duration?: number;
+      fps?: number;
     },
   ) => Promise<void>;
 }
@@ -87,6 +89,8 @@ export function useGenerationApi(): UseGenerationApiReturn {
         voice?: string;
         voiceModel?: string;
         autoCaption?: boolean;
+        duration?: number;
+        fps?: number;
       },
     ) => {
       if (!prompt.trim() || isLoading) return;
@@ -133,6 +137,8 @@ export function useGenerationApi(): UseGenerationApiReturn {
             voice: options?.voice,
             voiceModel: options?.voiceModel,
             autoCaption: options?.autoCaption,
+            duration: options?.duration,
+            fps: options?.fps,
             currentCode: isFollowUp ? currentCode : undefined,
             conversationHistory: isFollowUp ? conversationHistory : [],
             previouslyUsedSkills: isFollowUp ? previouslyUsedSkills : [],
@@ -160,6 +166,11 @@ export function useGenerationApi(): UseGenerationApiReturn {
           onError?.(errorMessage, "api");
           onErrorMessage?.(errorMessage, "api");
           return;
+        }
+
+        // Trigger immediate credit balance refresh in header
+        if (typeof window !== "undefined") {
+          window.dispatchEvent(new Event("swdbot-refresh-user"));
         }
 
         const contentType = response.headers.get("content-type") || "";

@@ -1,5 +1,6 @@
 import { Metadata, Viewport } from "next";
 import "../../styles/global.css";
+import { AuthProvider } from "@/lib/auth-context";
 
 export const metadata: Metadata = {
   title: "Swdbot - Motion Studio",
@@ -22,7 +23,9 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en">
-      <body className="bg-background">{children}</body>
+      <body className="bg-background">
+        <AuthProvider>{children}</AuthProvider>
+      </body>
     </html>
   );
 }

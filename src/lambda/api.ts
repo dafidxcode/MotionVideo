@@ -29,11 +29,14 @@ const makeRequest = async <Res>(
 
 export const renderVideo = async ({
   inputProps,
+  projectId,
 }: {
   inputProps: z.infer<typeof CompositionProps>;
+  projectId?: string;
 }) => {
   const body: z.infer<typeof RenderRequest> = {
     inputProps,
+    projectId,
   };
 
   return makeRequest<RenderMediaOnLambdaOutput>("/api/lambda/render", body);
@@ -42,13 +45,16 @@ export const renderVideo = async ({
 export const getProgress = async ({
   id,
   bucketName,
+  projectId,
 }: {
   id: string;
   bucketName: string;
+  projectId?: string;
 }) => {
   const body: z.infer<typeof ProgressRequest> = {
     id,
     bucketName,
+    projectId,
   };
 
   return makeRequest<ProgressResponse>("/api/lambda/progress", body);

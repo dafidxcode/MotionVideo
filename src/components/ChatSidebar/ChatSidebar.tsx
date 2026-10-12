@@ -2,7 +2,6 @@
 
 import { Button } from "@/components/ui/button";
 import { useGenerationApi } from "@/hooks/useGenerationApi";
-import { cn } from "@/lib/utils";
 import type {
   AssistantMetadata,
   ConversationContextMessage,
@@ -36,6 +35,8 @@ export interface ChatSidebarRef {
     voice?: string;
     voiceModel?: string;
     autoCaption?: boolean;
+    duration?: number;
+    fps?: number;
   }) => void;
 }
 
@@ -131,6 +132,8 @@ export const ChatSidebar = forwardRef<ChatSidebarRef, ChatSidebarProps>(
       voice?: string;
       voiceModel?: string;
       autoCaption?: boolean;
+      duration?: number;
+      fps?: number;
     }) => {
       const currentPrompt = promptRef.current;
       if (!currentPrompt.trim()) return;
@@ -170,34 +173,31 @@ export const ChatSidebar = forwardRef<ChatSidebarRef, ChatSidebarProps>(
     }));
 
     return (
-      <div
-        className={cn(
-          "flex flex-col bg-background transition-all duration-300 h-full",
-          isCollapsed
-            ? "w-12 shrink-0"
-            : "w-full min-[1000px]:w-[40%] min-[1000px]:min-w-[320px] min-[1000px]:max-w-[520px] shrink",
-        )}
-      >
+      <div className="flex flex-col w-full h-full transition-all duration-300">
         {isCollapsed ? (
-          <div className="flex justify-center px-4 mb-3">
+          <div className="flex flex-col items-center py-3 h-full bg-[#18181B] border border-[#28282C] rounded-2xl shadow-xl">
             <Button
               variant="ghost"
               size="icon-sm"
               onClick={onToggleCollapse}
-              className="text-muted-foreground hover:text-foreground"
+              className="text-[#9A9AA2] hover:text-[#F5F5F7] hover:bg-[#1F1F23] cursor-pointer"
+              title="Expand Chat"
             >
               <PanelLeftOpen className="w-4 h-4" />
             </Button>
           </div>
         ) : (
-          /* Chat area with subtle backdrop */
-          <div className="flex-1 flex flex-col min-h-0 m-3 sm:m-4 min-[1000px]:ml-12 min-[1000px]:mr-8 min-[1000px]:mb-8 rounded-xl bg-muted/20 border border-border/30 shadow-sm">
+          /* Chat area container */
+          <div className="flex-1 flex flex-col min-h-0 w-full h-full rounded-2xl bg-[#18181B] border border-[#28282C] shadow-xl overflow-hidden font-sans">
             {/* Header */}
-            <div className="flex items-start justify-between px-4 pt-4 pb-2">
-              <h2 className="text-sm font-medium text-muted-foreground">
-                Swdbot Assistant
-              </h2>
-              <div className="flex items-center gap-1 -mt-1">
+            <div className="flex items-center justify-between px-4 py-3 border-b border-[#28282C] shrink-0 bg-[#18181B]">
+              <div className="flex items-center gap-2">
+                <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                <h2 className="text-xs font-bold text-[#F5F5F7] tracking-wider uppercase">
+                  Swdbot Assistant
+                </h2>
+              </div>
+              <div className="flex items-center gap-1">
                 <Button
                   variant="ghost"
                   size="sm"
@@ -211,7 +211,7 @@ export const ChatSidebar = forwardRef<ChatSidebarRef, ChatSidebarProps>(
                     }
                   }}
                   title="Start over"
-                  className="text-muted-foreground hover:text-foreground text-xs gap-1 h-7 px-2"
+                  className="text-[#9A9AA2] hover:text-[#F5F5F7] hover:bg-[#1F1F23] text-xs gap-1.5 h-7 px-2 cursor-pointer rounded-lg"
                 >
                   <RotateCcw className="w-3 h-3" />
                   Reset
@@ -220,7 +220,8 @@ export const ChatSidebar = forwardRef<ChatSidebarRef, ChatSidebarProps>(
                   variant="ghost"
                   size="icon-sm"
                   onClick={onToggleCollapse}
-                  className="text-muted-foreground hover:text-foreground"
+                  className="text-[#9A9AA2] hover:text-[#F5F5F7] hover:bg-[#1F1F23] h-7 w-7 cursor-pointer rounded-lg"
+                  title="Collapse sidebar"
                 >
                   <PanelLeftClose className="w-4 h-4" />
                 </Button>

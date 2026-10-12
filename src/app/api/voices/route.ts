@@ -43,7 +43,11 @@ export async function GET(req: Request) {
           ? `HeyGen returned no ${language} voices for this workspace.`
           : null,
     };
-    return NextResponse.json(payload);
+    return NextResponse.json(payload, {
+      headers: {
+        "Cache-Control": "public, max-age=1800, stale-while-revalidate=86400",
+      },
+    });
   } catch (err) {
     const message =
       err instanceof Error ? err.message : "Unknown HeyGen voices error.";

@@ -14,6 +14,7 @@ import {
 import { AnimationPlayer } from "../../components/AnimationPlayer";
 import { CodeEditor } from "../../components/CodeEditor";
 import { Header } from "../../components/Header";
+import { UserHeaderProfile } from "../../components/UserHeaderProfile";
 import { TabPanel } from "../../components/TabPanel";
 import { examples, getExampleById } from "../../examples/code";
 import { useAnimationState } from "../../hooks/useAnimationState";
@@ -80,21 +81,24 @@ function DemoPageContent() {
   return (
     <div className="h-screen w-screen bg-background flex flex-col [&_::-webkit-scrollbar]:w-1.5 [&_::-webkit-scrollbar-track]:bg-transparent [&_::-webkit-scrollbar-thumb]:bg-border [&_::-webkit-scrollbar-thumb]:rounded-full hover:[&_::-webkit-scrollbar-thumb]:bg-secondary">
       {/* Header with logo */}
-      <header className="flex items-center gap-6 py-8 px-12 shrink-0">
-        <div className="flex flex-col gap-2">
-          <Header asLink />
-          <Link
-            href="/"
-            className="flex items-center gap-1.5 text-xs text-muted-foreground-dim hover:text-foreground transition-colors"
-          >
-            <ArrowLeft className="w-3 h-3" />
-            Back to Home
-          </Link>
+      <header className="flex items-center justify-between py-6 px-6 sm:px-12 shrink-0 border-b border-white/5">
+        <div className="flex items-center gap-6">
+          <div className="flex flex-col gap-2">
+            <Header asLink />
+            <Link
+              href="/"
+              className="flex items-center gap-1.5 text-xs text-muted-foreground-dim hover:text-foreground transition-colors"
+            >
+              <ArrowLeft className="w-3 h-3" />
+              Back to Home
+            </Link>
+          </div>
+          <div className="h-10 w-px bg-border" />
+          <h1 className="text-sm font-medium text-muted-foreground">
+            Example Gallery
+          </h1>
         </div>
-        <div className="h-10 w-px bg-border" />
-        <h1 className="text-sm font-medium text-muted-foreground">
-          Example Gallery
-        </h1>
+        <UserHeaderProfile />
       </header>
 
       {/* Main content with sidebar */}

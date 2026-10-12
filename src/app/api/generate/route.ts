@@ -9,6 +9,8 @@ import {
 } from "@/lib/llm-provider";
 import { generateObject, streamText } from "ai";
 import { z } from "zod";
+import { verifySessionToken } from "@/lib/auth";
+import { chargeUserCredits } from "@/lib/credits";
 
 const VALIDATION_PROMPT = `You are a prompt classifier for a motion graphics generation tool.
 
@@ -306,6 +308,8 @@ interface GenerateRequest {
   voice?: string;
   voiceModel?: string;
   autoCaption?: boolean;
+  duration?: number;
+  fps?: number;
 }
 
 interface GenerateResponse {
@@ -334,7 +338,74 @@ export async function POST(req: Request) {
     voice = "",
     voiceModel = "auto",
     autoCaption = true,
+    duration = 300,
+    fps = 30,
   }: GenerateRequest = await req.json();
+
+  // ── Authentication & Credit Deduction ─────────────────────────────────────
+  const cookieHeader = req.headers.get("cookie") || "";
+  const authHeader = req.headers.get("authorization");
+  let token = "";
+  if (cookieHeader) {
+    const match = cookieHeader.match(/swdbot_session=([^;]+)/);
+    if (match) token = match[1];
+  }
+  if (!token && authHeader?.startsWith("Bearer ")) {
+    token = authHeader.substring(7);
+  }
+
+  let userEmail: string | undefined;
+  if (token) {
+    const verified = verifySessionToken(token);
+    if (verified.valid && verified.email) {
+      userEmail = verified.email;
+    }
+  }
+
+  // Deduct real credits via Supabase
+  if (userEmail) {
+    const action = isFollowUp ? "chatbot_llm" : "initial_generation";
+    const durationFrames = duration || 300;
+    const currentFps = fps || 30;
+    const durationSeconds = Math.max(10, Math.round(durationFrames / currentFps));
+    // 2 credits per 10 seconds: (10s = 2, 20s = 4, 30s = 6, 60s/1m = 12, 120s/2m = 24)
+    const ratePer10s = 2;
+    const calculatedStep1Credits = Math.max(
+      ratePer10s,
+      Math.round((durationSeconds / 10) * ratePer10s),
+    );
+
+    const chargeResult = await chargeUserCredits({
+      email: userEmail,
+      action,
+      overrideAmount: !isFollowUp ? calculatedStep1Credits : undefined,
+      description: isFollowUp
+        ? `Chatbot AI Revision: "${prompt.slice(0, 60)}"`
+        : `Step 1 Motion Generation (${durationSeconds}s, ${calculatedStep1Credits} Cr): "${prompt.slice(0, 60)}"`,
+      metadata: {
+        model,
+        isFollowUp,
+        language,
+        durationSeconds,
+        durationFrames,
+        fps: currentFps,
+      },
+    });
+
+    if (!chargeResult.success) {
+      return new Response(
+        JSON.stringify({
+          error: chargeResult.error || "Insufficient balance for generation.",
+          type: "insufficient_quota",
+          remainingQuota: chargeResult.previousQuota,
+        }),
+        {
+          status: 402,
+          headers: { "Content-Type": "application/json" },
+        },
+      );
+    }
+  }
 
   // Resolve LLM provider + model — FLEKSIBEL dual-provider:
   // - model "claude-*" -> Anthropic, "gpt-*"/"o*"/"chatgpt*" -> OpenAI
@@ -438,7 +509,7 @@ export async function POST(req: Request) {
   }
 
   // Preferred Voice & Auto-Caption instructions
-  const audioPreferenceNotice = `\n- Preferred Voiceover Voice: "${voice}" (HeyGen TTS${voiceModel && voiceModel !== "auto" ? `, engine: ${voiceModel}` : ""}). Auto-captions: ${autoCaption ? "enabled" : "disabled"}.\n- Ensure the VOICEOVER_SCRIPT narration aligns seamlessly with the visual sequences.`;
+  const audioPreferenceNotice = `\n- Preferred Voiceover Voice: "${voice}" (SwdVoice${voiceModel && voiceModel !== "auto" ? `, engine: ${voiceModel}` : ""}). Auto-captions: ${autoCaption ? "enabled" : "disabled"}.\n- Ensure the VOICEOVER_SCRIPT narration aligns seamlessly with the visual sequences.`;
   languageInstruction += audioPreferenceNotice;
 
   // Load skill-specific content only for NEW skills (previously used skills are already in context)

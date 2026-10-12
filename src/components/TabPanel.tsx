@@ -42,20 +42,19 @@ export function TabPanel({
     <div className="flex flex-col h-full min-w-0">
       <div
         className={cn(
-          "w-fit mb-3 sm:mb-4 shrink-0 rounded-lg overflow-hidden border border-border",
+          "w-fit mb-3 sm:mb-4 shrink-0 rounded-xl overflow-hidden border border-[#28282C] bg-[#18181B] p-1 flex items-center gap-1 shadow-sm",
           hideHeaderOnMobile ? "hidden min-[1000px]:inline-flex" : "inline-flex",
         )}
       >
-        {tabs.map((tab, index) => (
+        {tabs.map((tab) => (
           <button
             key={tab.id}
             onClick={() => handleTabChange(tab.id)}
             className={cn(
-              "flex items-center gap-2 px-3 sm:px-4 py-1.5 sm:py-2 text-xs sm:text-sm font-medium transition-colors cursor-pointer",
-              index > 0 && "border-l border-border",
+              "flex items-center gap-2 px-3 sm:px-4 py-1.5 text-xs sm:text-sm font-semibold transition-all cursor-pointer rounded-lg",
               activeTab === tab.id
-                ? "bg-accent text-foreground"
-                : "bg-transparent text-muted-foreground hover:text-foreground hover:bg-accent/30",
+                ? "bg-[#1F1F23] text-[#F5F5F7] shadow-sm border border-[#28282C]"
+                : "bg-transparent text-[#9A9AA2] hover:text-[#F5F5F7] hover:bg-[#1F1F23]/60",
             )}
           >
             <tab.icon className="w-4 h-4" />

@@ -91,6 +91,26 @@ export function useConversationState() {
     }
   }, []);
 
+  const loadConversationMessages = useCallback(
+    (historyMessages: Array<{ role: string; content: string; codeSnapshot?: string; attachedImages?: string[] }>) => {
+      if (!Array.isArray(historyMessages) || historyMessages.length === 0) return;
+      const formatted: ConversationMessage[] = historyMessages.map((m, idx) => ({
+        id: `hist-${idx}-${Date.now()}`,
+        role: (m.role === "assistant" ? "assistant" : "user") as "user" | "assistant",
+        content: m.content || "",
+        timestamp: Date.now() - (historyMessages.length - idx) * 1000,
+        codeSnapshot: m.codeSnapshot,
+        attachedImages: m.attachedImages,
+      }));
+      setState((prev) => ({
+        ...prev,
+        messages: formatted,
+        hasManualEdits: false,
+      }));
+    },
+    [],
+  );
+
   const clearConversation = useCallback(() => {
     lastAiCodeRef.current = "";
     setState({
@@ -165,6 +185,7 @@ export function useConversationState() {
     addAssistantMessage,
     addErrorMessage,
     markManualEdit,
+    loadConversationMessages,
     clearConversation,
     getFullContext,
     getPreviouslyUsedSkills,

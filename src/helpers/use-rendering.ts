@@ -35,7 +35,10 @@ const wait = async (milliSeconds: number) => {
   });
 };
 
-export const useRendering = (inputProps: z.infer<typeof CompositionProps>) => {
+export const useRendering = (
+  inputProps: z.infer<typeof CompositionProps>,
+  projectId?: string,
+) => {
   const [state, setState] = useState<State>({
     status: "init",
   });
@@ -45,7 +48,10 @@ export const useRendering = (inputProps: z.infer<typeof CompositionProps>) => {
       status: "invoking",
     });
     try {
-      const { renderId, bucketName } = await renderVideo({ inputProps });
+      const { renderId, bucketName } = await renderVideo({ inputProps, projectId });
+      if (typeof window !== "undefined") {
+        window.dispatchEvent(new Event("swdbot-refresh-user"));
+      }
       setState({
         status: "rendering",
         progress: 0,
@@ -59,6 +65,7 @@ export const useRendering = (inputProps: z.infer<typeof CompositionProps>) => {
         const result = await getProgress({
           id: renderId,
           bucketName: bucketName,
+          projectId,
         });
         switch (result.type) {
           case "error": {

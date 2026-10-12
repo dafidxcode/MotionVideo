@@ -47,12 +47,6 @@ interface HeyGenVoicesResponse {
   next_token?: string;
 }
 
-const ENGINE_LABELS: Record<string, string> = {
-  starfish: "Starfish studio voice",
-  orca: "HeyGen Voice engine",
-  elevenlabs: "ElevenLabs neural voice",
-};
-
 function normalizeEngines(
   engines: string[] | undefined,
 ): VoiceEngineId[] | undefined {
@@ -62,11 +56,7 @@ function normalizeEngines(
 }
 
 function describeVoice(item: HeyGenVoiceItem): string {
-  const defaultEngine = item.default_engine ?? "";
-  const engineLabel = ENGINE_LABELS[defaultEngine] ?? "HeyGen catalog voice";
-  const genderLabel = item.gender ? ` • ${item.gender}` : "";
-  const previewHint = item.preview_audio_url ? " • preview available" : "";
-  return `${engineLabel}${genderLabel}${previewHint}`;
+  return item.gender === "male" ? "M" : item.gender === "female" ? "F" : "";
 }
 
 /**
@@ -112,6 +102,14 @@ export async function listHeyGenVoices(
 
     for (const item of items) {
       if (!item.voice_id) continue;
+      // Strict language matching check
+      if (item.language && languageName) {
+        const itemL = item.language.toLowerCase().trim();
+        const targetL = languageName.toLowerCase().trim();
+        if (!itemL.includes(targetL) && !targetL.includes(itemL)) {
+          continue;
+        }
+      }
       collected.push({
         id: item.voice_id,
         name: item.name || "Unnamed voice",

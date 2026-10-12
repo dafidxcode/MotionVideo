@@ -25,26 +25,28 @@ const Home: NextPage = () => {
     },
   ) => {
     setIsNavigating(true);
-    // Store images in sessionStorage (too large for URL params)
-    if (attachedImages && attachedImages.length > 0) {
-      sessionStorage.setItem(
-        "initialAttachedImages",
-        JSON.stringify(attachedImages),
-      );
-    } else {
-      sessionStorage.removeItem("initialAttachedImages");
-    }
-    const params = new URLSearchParams({
-      prompt,
-      model,
-      language: options?.language || "en",
-      voiceModel: options?.voiceModel || "auto",
-      voice: options?.voice || "",
-      autoCaption: String(options?.autoCaption ?? true),
-      duration: String(options?.duration || 300),
-      fps: String(options?.fps || 30),
-    });
-    router.push(`/generate?${params.toString()}`);
+
+    const projectId = `proj_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+
+    // Store generation payload in sessionStorage so URL remains clean without prompt text
+    sessionStorage.setItem(
+      "pending_generation",
+      JSON.stringify({
+        projectId,
+        prompt,
+        model,
+        language: options?.language || "ms",
+        voiceModel: options?.voiceModel || "auto",
+        voice: options?.voice || "",
+        autoCaption: options?.autoCaption ?? true,
+        duration: options?.duration || 300,
+        fps: options?.fps || 30,
+        attachedImages: attachedImages && attachedImages.length > 0 ? attachedImages : undefined,
+      }),
+    );
+
+    // Clean URL: /generate?projectId=proj_xxx (Never expose user prompt in URL)
+    router.push(`/generate?projectId=${encodeURIComponent(projectId)}`);
   };
 
   return (

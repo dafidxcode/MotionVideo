@@ -304,6 +304,7 @@ interface GenerateRequest {
   frameImages?: string[];
   language?: string;
   voice?: string;
+  voiceModel?: string;
   autoCaption?: boolean;
 }
 
@@ -330,7 +331,8 @@ export async function POST(req: Request) {
     previouslyUsedSkills = [],
     frameImages,
     language = "en",
-    voice = "onyx",
+    voice = "",
+    voiceModel = "auto",
     autoCaption = true,
   }: GenerateRequest = await req.json();
 
@@ -436,7 +438,7 @@ export async function POST(req: Request) {
   }
 
   // Preferred Voice & Auto-Caption instructions
-  const audioPreferenceNotice = `\n- Preferred Voiceover Voice: "${voice}" (OpenAI TTS-1). Auto-captions: ${autoCaption ? "enabled" : "disabled"}.\n- Ensure the VOICEOVER_SCRIPT narration aligns seamlessly with the visual sequences.`;
+  const audioPreferenceNotice = `\n- Preferred Voiceover Voice: "${voice}" (HeyGen TTS${voiceModel && voiceModel !== "auto" ? `, engine: ${voiceModel}` : ""}). Auto-captions: ${autoCaption ? "enabled" : "disabled"}.\n- Ensure the VOICEOVER_SCRIPT narration aligns seamlessly with the visual sequences.`;
   languageInstruction += audioPreferenceNotice;
 
   // Load skill-specific content only for NEW skills (previously used skills are already in context)

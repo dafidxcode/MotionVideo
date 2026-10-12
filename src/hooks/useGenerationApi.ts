@@ -66,6 +66,7 @@ interface UseGenerationApiReturn {
       silent?: boolean;
       language?: string;
       voice?: string;
+      voiceModel?: string;
       autoCaption?: boolean;
     },
   ) => Promise<void>;
@@ -84,6 +85,7 @@ export function useGenerationApi(): UseGenerationApiReturn {
         silent?: boolean;
         language?: string;
         voice?: string;
+        voiceModel?: string;
         autoCaption?: boolean;
       },
     ) => {
@@ -129,6 +131,7 @@ export function useGenerationApi(): UseGenerationApiReturn {
             model,
             language: options?.language,
             voice: options?.voice,
+            voiceModel: options?.voiceModel,
             autoCaption: options?.autoCaption,
             currentCode: isFollowUp ? currentCode : undefined,
             conversationHistory: isFollowUp ? conversationHistory : [],

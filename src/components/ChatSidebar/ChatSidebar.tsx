@@ -34,6 +34,7 @@ export interface ChatSidebarRef {
     attachedImages?: string[];
     language?: string;
     voice?: string;
+    voiceModel?: string;
     autoCaption?: boolean;
   }) => void;
 }
@@ -128,6 +129,7 @@ export const ChatSidebar = forwardRef<ChatSidebarRef, ChatSidebarProps>(
       attachedImages?: string[];
       language?: string;
       voice?: string;
+      voiceModel?: string;
       autoCaption?: boolean;
     }) => {
       const currentPrompt = promptRef.current;

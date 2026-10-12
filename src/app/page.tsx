@@ -17,6 +17,7 @@ const Home: NextPage = () => {
     attachedImages?: string[],
     options?: {
       language?: string;
+      voiceModel?: string;
       voice?: string;
       autoCaption?: boolean;
       duration?: number;
@@ -37,7 +38,8 @@ const Home: NextPage = () => {
       prompt,
       model,
       language: options?.language || "en",
-      voice: options?.voice || "onyx",
+      voiceModel: options?.voiceModel || "auto",
+      voice: options?.voice || "",
       autoCaption: String(options?.autoCaption ?? true),
       duration: String(options?.duration || 300),
       fps: String(options?.fps || 30),

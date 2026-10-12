@@ -37,6 +37,8 @@ interface AnimationPlayerProps {
   onRuntimeError?: (error: string) => void;
   onFrameChange?: (frame: number) => void;
   initialVoice?: string;
+  initialVoiceModel?: string;
+  initialLanguage?: string;
   initialAutoCaption?: boolean;
 }
 

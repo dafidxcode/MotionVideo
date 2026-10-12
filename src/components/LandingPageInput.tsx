@@ -12,59 +12,46 @@ import {
 } from "@/components/ui/select";
 import { useImageAttachments } from "@/hooks/useImageAttachments";
 import { MODELS, type ModelId } from "@/types/generation";
+import {
+  VOICE_LANGUAGES,
+  VOICE_MODELS,
+  type VoiceEngineId,
+  type VoiceLanguageCode,
+  type VoiceOption,
+} from "@/types/voice";
 import { BANG_MOTION_STYLES } from "@/data/bangMotionStyles";
 import { cn } from "@/lib/utils";
 import {
   ArrowRight,
   ArrowUp,
+  AudioLines,
   Clock,
   Globe,
+  Loader2,
   Mic,
   Paperclip,
+  Play,
   SlidersHorizontal,
   Sparkles,
   Subtitles,
   X,
 } from "lucide-react";
-import React, { useEffect, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-export type LanguageCode = "en" | "ms" | "id";
+export type LanguageCode = VoiceLanguageCode;
 
-export const LANGUAGE_OPTIONS: { id: LanguageCode; label: string; flagUrl: string }[] = [
-  { id: "en", label: "English", flagUrl: "https://flagsapi.com/US/flat/64.png" },
-  { id: "ms", label: "Malay", flagUrl: "https://flagsapi.com/MY/flat/64.png" },
-  { id: "id", label: "Indonesian", flagUrl: "https://flagsapi.com/ID/flat/64.png" },
-];
+export const LANGUAGE_OPTIONS = VOICE_LANGUAGES.map((l) => ({
+  id: l.id,
+  label: l.label,
+  flagUrl: l.flagUrl,
+}));
 
-export const VOICE_OPTIONS: Record<
-  LanguageCode,
-  { id: string; name: string; tag: string; desc: string }[]
-> = {
-  en: [
-    { id: "onyx", name: "Onyx", tag: "Recommended", desc: "Deep, authoritative, documentary-style" },
-    { id: "nova", name: "Nova", tag: "Popular", desc: "Energetic, clear, and engaging explainer" },
-    { id: "alloy", name: "Alloy", tag: "Neutral", desc: "Balanced, modern, versatile tech voice" },
-    { id: "echo", name: "Echo", tag: "Natural", desc: "Warm, natural, conversational storytelling" },
-    { id: "fable", name: "Fable", tag: "Story", desc: "Dynamic narrative tone with storytelling cadence" },
-    { id: "shimmer", name: "Shimmer", tag: "Elegant", desc: "Soft, graceful, premium brand voice" },
-  ],
-  ms: [
-    { id: "onyx", name: "Onyx", tag: "Disyorkan", desc: "Garau, berwibawa, sesuai dokumentari & sejarah" },
-    { id: "nova", name: "Nova", tag: "Popular", desc: "Bertenaga, ceria & jelas untuk penerangan" },
-    { id: "alloy", name: "Alloy", tag: "Neutral", desc: "Seimbang, kemas & profesional" },
-    { id: "echo", name: "Echo", tag: "Natural", desc: "Mesra, santai & semula jadi" },
-    { id: "fable", name: "Fable", tag: "Story", desc: "Gaya naratif ekspresif bercerita" },
-    { id: "shimmer", name: "Shimmer", tag: "Elegan", desc: "Lembut, jernih & tenang untuk jenama" },
-  ],
-  id: [
-    { id: "onyx", name: "Onyx", tag: "Rekomendasi", desc: "Berat, berwibawa, cocok untuk sejarah & sains" },
-    { id: "nova", name: "Nova", tag: "Populer", desc: "Energik, hangat & sangat jelas untuk explainer" },
-    { id: "alloy", name: "Alloy", tag: "Neutral", desc: "Seimbang, modern untuk promo & tutorial" },
-    { id: "echo", name: "Echo", tag: "Natural", desc: "Ramah, santai & natural" },
-    { id: "fable", name: "Fable", tag: "Story", desc: "Ekspresif, gaya bercerita / naratif" },
-    { id: "shimmer", name: "Shimmer", tag: "Elegan", desc: "Jernih, lembut & artikulatif" },
-  ],
-};
+export interface VoiceCatalogPayload {
+  language: VoiceLanguageCode;
+  voices: VoiceOption[];
+  configured: boolean;
+  warning: string | null;
+}
 
 export const DURATION_OPTIONS = [
   { value: "300", label: "10 seconds" },
@@ -81,6 +68,7 @@ interface LandingPageInputProps {
     attachedImages?: string[],
     options?: {
       language: LanguageCode;
+      voiceModel: VoiceEngineId;
       voice: string;
       autoCaption: boolean;
       duration?: number;
@@ -99,21 +87,99 @@ export function LandingPageInput({
   const [selectedStyleId, setSelectedStyleId] = useState<string | null>(null);
   const [model, setModel] = useState<ModelId>(MODELS[0].id);
   const [language, setLanguage] = useState<LanguageCode>("en");
-  const [voice, setVoice] = useState<string>("onyx");
+  const [voiceModel, setVoiceModel] = useState<VoiceEngineId>("auto");
+  const [voice, setVoice] = useState<string>("");
   const [autoCaption, setAutoCaption] = useState<boolean>(true);
   const [durationInFrames, setDurationInFrames] = useState<number>(300);
   const [fps] = useState<number>(30);
   const [mobileTab, setMobileTab] = useState<"prompt" | "styles">("prompt");
   const [isStyleDraggingOver, setIsStyleDraggingOver] = useState(false);
 
+  const [catalog, setCatalog] = useState<VoiceCatalogPayload | null>(null);
+  const [isCatalogLoading, setIsCatalogLoading] = useState<boolean>(false);
+  const [catalogError, setCatalogError] = useState<string | null>(null);
+
   const activeStyle = BANG_MOTION_STYLES.find((s) => s.id === selectedStyleId);
 
   const currentLang =
     LANGUAGE_OPTIONS.find((l) => l.id === language) || LANGUAGE_OPTIONS[0];
 
+  const currentVoiceModel =
+    VOICE_MODELS.find((m) => m.id === voiceModel) || VOICE_MODELS[0];
+
   const currentDuration =
     DURATION_OPTIONS.find((d) => d.value === String(durationInFrames)) ||
     DURATION_OPTIONS[0];
+
+  // Load the language-scoped HeyGen catalog.
+  const loadVoiceCatalog = useCallback(async (lang: LanguageCode) => {
+    setIsCatalogLoading(true);
+    setCatalogError(null);
+    try {
+      const res = await fetch(`/api/voices?language=${lang}`);
+      if (!res.ok) throw new Error(`Voice catalog failed (${res.status})`);
+      const data = (await res.json()) as VoiceCatalogPayload;
+      setCatalog(data);
+    } catch (err) {
+      setCatalog(null);
+      setCatalogError(
+        err instanceof Error ? err.message : "Could not load the voice catalog.",
+      );
+    } finally {
+      setIsCatalogLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadVoiceCatalog(language);
+  }, [language, loadVoiceCatalog]);
+
+  // HeyGen reports which engines each voice can speak; filter the list so the
+  // dropdown only offers voices the selected model can actually render.
+  const availableVoices: VoiceOption[] = useMemo(() => {
+    const all = catalog?.voices ?? [];
+    if (voiceModel === "auto") return all;
+    const matched = all.filter(
+      (v) => !v.engines || v.engines.length === 0 || v.engines.includes(voiceModel),
+    );
+    return matched.length > 0 ? matched : all;
+  }, [catalog?.voices, voiceModel]);
+
+  // Keep the selection valid whenever the language or model changes.
+  useEffect(() => {
+    if (availableVoices.length === 0) {
+      if (voice !== "") setVoice("");
+      return;
+    }
+    if (!availableVoices.some((v) => v.id === voice)) {
+      setVoice(availableVoices[0].id);
+    }
+  }, [availableVoices, voice]);
+
+  const selectedVoice = availableVoices.find((v) => v.id === voice);
+  const catalogWarning = catalog?.warning ?? null;
+  const catalogWarningForUser = catalogError ?? catalogWarning;
+
+  const previewAudioRef = useRef<HTMLAudioElement | null>(null);
+  const handlePreview = (voiceOption: VoiceOption) => {
+    if (!voiceOption.previewUrl) return;
+    if (previewAudioRef.current) {
+      previewAudioRef.current.pause();
+      previewAudioRef.current = null;
+    }
+    const audio = new Audio(voiceOption.previewUrl);
+    previewAudioRef.current = audio;
+    void audio.play().catch(() => {
+      setCatalogError("Preview playback was blocked by the browser.");
+    });
+  };
+
+  useEffect(() => {
+    return () => {
+      previewAudioRef.current?.pause();
+      previewAudioRef.current = null;
+    };
+  }, []);
 
   const {
     attachedImages,
@@ -154,6 +220,7 @@ export function LandingPageInput({
       attachedImages.length > 0 ? attachedImages : undefined,
       {
         language,
+        voiceModel,
         voice,
         autoCaption,
         duration: durationInFrames,
@@ -480,37 +547,47 @@ export function LandingPageInput({
                 </Select>
               </div>
 
-              {/* 2. Voice Model Selector (Filtered by Language) */}
+              {/* 2. Voice Model Selector (HeyGen speech engine) */}
               <div className="flex flex-col gap-1.5">
                 <label
-                  htmlFor="voice-select"
+                  htmlFor="voice-model-select"
                   className="text-xs font-semibold text-neutral-300 flex items-center gap-1.5"
                 >
-                  <Mic className="w-3.5 h-3.5 text-neutral-400" />
-                  Voice
+                  <AudioLines className="w-3.5 h-3.5 text-neutral-400" />
+                  Voice Model
+                  <span className="text-[10px] font-normal text-neutral-500">
+                    HeyGen
+                  </span>
                 </label>
                 <Select
-                  value={voice}
-                  onValueChange={(val) => setVoice(val)}
+                  value={voiceModel}
+                  onValueChange={(val) => setVoiceModel(val as VoiceEngineId)}
                   disabled={isNavigating}
                 >
                   <SelectTrigger
-                    id="voice-select"
+                    id="voice-model-select"
                     className="w-full bg-neutral-800/90 border border-white/15 text-white text-xs h-9 px-3 rounded-xl hover:bg-neutral-800 hover:border-white/30 transition-all cursor-pointer"
                   >
-                    <SelectValue />
+                    <div className="flex items-center gap-2">
+                      <span className="font-semibold">
+                        {currentVoiceModel.name}
+                      </span>
+                      <span className="text-[10px] text-neutral-400">
+                        {currentVoiceModel.model}
+                      </span>
+                    </div>
                   </SelectTrigger>
                   <SelectContent className="bg-neutral-800 border-white/15 text-white shadow-2xl">
-                    {VOICE_OPTIONS[language].map((v) => (
+                    {VOICE_MODELS.map((m) => (
                       <SelectItem
-                        key={v.id}
-                        value={v.id}
+                        key={m.id}
+                        value={m.id}
                         className="text-neutral-200 focus:bg-neutral-700 focus:text-white text-xs cursor-pointer"
                       >
-                        <div className="flex items-center gap-2">
-                          <span className="font-semibold">{v.name}</span>
+                        <div className="flex flex-col">
+                          <span className="font-semibold">{m.name}</span>
                           <span className="text-[10px] text-neutral-400">
-                            — {v.desc}
+                            {m.desc}
                           </span>
                         </div>
                       </SelectItem>
@@ -519,7 +596,97 @@ export function LandingPageInput({
                 </Select>
               </div>
 
-              {/* 3. Duration Selector */}
+              {/* 3. Voice Selector (HeyGen catalog, filtered by language + model) */}
+              <div className="flex flex-col gap-1.5">
+                <label
+                  htmlFor="voice-select"
+                  className="text-xs font-semibold text-neutral-300 flex items-center gap-1.5"
+                >
+                  <Mic className="w-3.5 h-3.5 text-neutral-400" />
+                  Voice
+                  <span className="text-[10px] font-normal text-neutral-500">
+                    {currentLang.label} •{" "}
+                    {isCatalogLoading
+                      ? "loading…"
+                      : `${availableVoices.length} available`}
+                  </span>
+                </label>
+                <Select
+                  value={voice}
+                  onValueChange={(val) => setVoice(val)}
+                  disabled={isNavigating || isCatalogLoading || voice === ""}
+                >
+                  <SelectTrigger
+                    id="voice-select"
+                    className="w-full bg-neutral-800/90 border border-white/15 text-white text-xs h-9 px-3 rounded-xl hover:bg-neutral-800 hover:border-white/30 transition-all cursor-pointer disabled:opacity-50"
+                  >
+                    {isCatalogLoading ? (
+                      <div className="flex items-center gap-2">
+                        <Loader2 className="w-3 h-3 animate-spin" />
+                        <span>Loading HeyGen voices…</span>
+                      </div>
+                    ) : selectedVoice ? (
+                      <div className="flex items-center gap-2">
+                        <span className="font-semibold">{selectedVoice.name}</span>
+                        <span className="text-[10px] text-neutral-400">
+                          {selectedVoice.tag}
+                        </span>
+                      </div>
+                    ) : (
+                      <span className="text-neutral-400">
+                        No voices available
+                      </span>
+                    )}
+                  </SelectTrigger>
+                  <SelectContent className="bg-neutral-800 border-white/15 text-white shadow-2xl max-h-72">
+                    {availableVoices.length === 0 ? (
+                      <div className="px-2 py-3 text-[11px] text-neutral-400">
+                        {catalogWarningForUser ??
+                          `No HeyGen voices for ${currentLang.label}.`}
+                      </div>
+                    ) : (
+                      availableVoices.map((v) => (
+                        <SelectItem
+                          key={v.id}
+                          value={v.id}
+                          className="text-neutral-200 focus:bg-neutral-700 focus:text-white text-xs cursor-pointer"
+                        >
+                          <div className="flex flex-col">
+                            <span className="font-semibold">
+                              {v.name}{" "}
+                              <span className="text-[10px] font-normal text-neutral-400">
+                                {v.tag}
+                              </span>
+                            </span>
+                            <span className="text-[10px] text-neutral-400">
+                              {v.desc}
+                            </span>
+                          </div>
+                        </SelectItem>
+                      ))
+                    )}
+                  </SelectContent>
+                </Select>
+
+                {catalogWarningForUser && (
+                  <p className="text-[10px] leading-snug text-amber-400/90">
+                    {catalogWarningForUser}
+                  </p>
+                )}
+
+                {selectedVoice?.previewUrl && (
+                  <button
+                    type="button"
+                    onClick={() => handlePreview(selectedVoice)}
+                    className="self-start inline-flex items-center gap-1.5 text-[11px] font-semibold text-amber-300 hover:text-amber-200 transition-colors cursor-pointer"
+                  >
+                    <Play className="w-3 h-3" />
+                    Preview {selectedVoice.name}
+                  </button>
+                )}
+              </div>
+
+              {/* 4. Duration Selector */}
               <div className="flex flex-col gap-1.5">
                 <label
                   htmlFor="duration-select"
@@ -557,7 +724,7 @@ export function LandingPageInput({
                 </Select>
               </div>
 
-              {/* 4. Auto-Captions Checkbox */}
+              {/* 5. Auto-Captions Checkbox */}
               <div className="flex items-center justify-between p-2.5 rounded-xl border border-white/15 bg-neutral-800/90 hover:bg-neutral-800 hover:border-white/30 transition-all">
                 <label
                   htmlFor="auto-caption-toggle"

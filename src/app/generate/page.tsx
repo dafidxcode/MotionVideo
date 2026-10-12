@@ -31,7 +31,8 @@ function GeneratePageContent() {
   const searchParams = useSearchParams();
   const initialPrompt = searchParams.get("prompt") || "";
   const initialLanguage = searchParams.get("language") || "en";
-  const initialVoice = searchParams.get("voice") || "onyx";
+  const initialVoiceModel = searchParams.get("voiceModel") || "auto";
+  const initialVoice = searchParams.get("voice") || "";
   const initialAutoCaption = searchParams.get("autoCaption") !== "false";
 
   // If we have an initial prompt from URL, start in streaming state
@@ -203,7 +204,7 @@ function GeneratePageContent() {
       addAssistantMessage(content, generatedCode, metadata);
       markAsAiGenerated();
 
-      // Automatically synthesize OpenAI TTS voiceover and Whisper captions on first generation
+      // Automatically synthesize the HeyGen voiceover and captions on first generation
       if (!autoVoiceoverAppliedRef.current && initialVoice) {
         autoVoiceoverAppliedRef.current = true;
         const script = extractScriptFromCode(generatedCode) || initialPrompt;
@@ -215,6 +216,8 @@ function GeneratePageContent() {
               body: JSON.stringify({
                 text: script.trim(),
                 voice: initialVoice,
+                engine: initialVoiceModel,
+                language: initialLanguage,
                 speed: 1.0,
                 withCaptions: initialAutoCaption,
               }),
@@ -233,13 +236,29 @@ function GeneratePageContent() {
                 if (data.duration) {
                   const neededFrames = Math.ceil(data.duration * fps) + 15;
                   setDurationInFrames((prev) => Math.max(prev, neededFrames));
+                } else {
+                  // HeyGen occasionally omits duration; measure the rendered
+                  // audio instead so the narration is never cut off.
+                  const probe = new window.Audio(data.audioUrl);
+                  probe.addEventListener("loadedmetadata", () => {
+                    if (!Number.isFinite(probe.duration) || probe.duration <= 0) {
+                      return;
+                    }
+                    const neededFrames = Math.ceil(probe.duration * fps) + 15;
+                    setDurationInFrames((prev) => Math.max(prev, neededFrames));
+                  });
                 }
 
+                const engineLabel =
+                  data.engine && data.engine !== "auto" ? data.engine : "HeyGen";
                 addAssistantMessage(
-                  `🎙️ **Voiceover & Captions Ready!**\nAuto-applied OpenAI TTS (${initialVoice}) with ${initialAutoCaption ? "real-time Whisper captions" : "clean audio narration"}. You can preview the complete video now or customize anything below.`,
+                  `🎙️ **Voiceover & Captions Ready!**\nAuto-applied HeyGen TTS (${engineLabel}) with ${initialAutoCaption ? "word-level synced captions" : "clean audio narration"}. You can preview the complete video now or customize anything below.`,
                   completeCode,
                 );
               }
+            } else {
+              const errData = await res.json().catch(() => ({}));
+              console.warn("Auto voiceover failed:", errData?.error);
             }
           } catch (err) {
             console.error("Auto voiceover generation error:", err);
@@ -251,6 +270,8 @@ function GeneratePageContent() {
       addAssistantMessage,
       markAsAiGenerated,
       initialVoice,
+      initialVoiceModel,
+      initialLanguage,
       initialAutoCaption,
       initialPrompt,
       fps,
@@ -318,11 +339,12 @@ function GeneratePageContent() {
           attachedImages: storedImages,
           language: initialLanguage,
           voice: initialVoice,
+          voiceModel: initialVoiceModel,
           autoCaption: initialAutoCaption,
         });
       }, 100);
     }
-  }, [initialPrompt, hasAutoStarted, initialLanguage, initialVoice, initialAutoCaption]);
+  }, [initialPrompt, hasAutoStarted, initialLanguage, initialVoice, initialVoiceModel, initialAutoCaption]);
 
   return (
     <PageLayout showLogoAsLink>
@@ -447,6 +469,8 @@ function GeneratePageContent() {
                   onRuntimeError={handleRuntimeError}
                   onFrameChange={setCurrentFrame}
                   initialVoice={initialVoice}
+                  initialVoiceModel={initialVoiceModel}
+                  initialLanguage={initialLanguage}
                   initialAutoCaption={initialAutoCaption}
                 />
                 {/* Mobile Quick Revise Banner */}

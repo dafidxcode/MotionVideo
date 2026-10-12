@@ -21,8 +21,17 @@ import {
   Volume2,
   Wand2,
 } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { CaptionWord } from "@/remotion/AnimatedCaptions";
+import {
+  VOICE_LANGUAGES,
+  VOICE_MODELS,
+  isVoiceEngineId,
+  isVoiceLanguageCode,
+  type VoiceEngineId,
+  type VoiceLanguageCode,
+  type VoiceOption,
+} from "@/types/voice";
 
 interface VoiceoverModalProps {
   code: string;
@@ -31,47 +40,10 @@ interface VoiceoverModalProps {
   fps: number;
   onDurationChange?: (duration: number) => void;
   initialVoice?: string;
+  initialVoiceModel?: string;
+  initialLanguage?: string;
   initialAutoCaption?: boolean;
 }
-
-const VOICES = [
-  {
-    id: "onyx",
-    name: "Onyx (Male)",
-    desc: "Deep, authoritative, documentary & history style",
-    tag: "Recommended",
-  },
-  {
-    id: "nova",
-    name: "Nova (Female)",
-    desc: "Energetic, clear, and engaging modern explainer",
-    tag: "Popular",
-  },
-  {
-    id: "alloy",
-    name: "Alloy (Neutral)",
-    desc: "Balanced, clean, modern tech voice",
-    tag: "Neutral",
-  },
-  {
-    id: "echo",
-    name: "Echo (Male)",
-    desc: "Warm, natural, conversational storytelling",
-    tag: "Natural",
-  },
-  {
-    id: "fable",
-    name: "Fable (Expressive)",
-    desc: "Dynamic narrative tone with storytelling cadence",
-    tag: "Story",
-  },
-  {
-    id: "shimmer",
-    name: "Shimmer (Female)",
-    desc: "Soft, graceful, elegant premium brand voice",
-    tag: "Elegant",
-  },
-];
 
 // Helper to extract voiceover script from code
 export function extractScriptFromCode(sourceCode: string): string {
@@ -97,7 +69,7 @@ export function extractScriptFromCode(sourceCode: string): string {
   return "";
 }
 
-// Helper to inject Audio and kinetic Whisper Captions into Remotion code
+// Helper to inject Audio and kinetic word-synced Captions into Remotion code
 export function injectAudioAndCaptionsIntoCode(
   sourceCode: string,
   audioUrl: string,
@@ -116,7 +88,7 @@ export function injectAudioAndCaptionsIntoCode(
   const hasWords = words && words.length > 0;
 
   // 2. Clean existing CAPTIONS constant if present
-  updated = updated.replace(/\/\/\s*Auto-Captions from OpenAI Whisper[\s\S]*?const\s+CAPTIONS\s*=\s*\[[\s\S]*?\];\n*/g, "");
+  updated = updated.replace(/\/\/\s*Auto-Captions from HeyGen TTS[\s\S]*?const\s+CAPTIONS\s*=\s*\[[\s\S]*?\];\n*/g, "");
   updated = updated.replace(/const\s+CAPTIONS\s*=\s*\[[\s\S]*?\];\n*/g, "");
 
   // 3. Inject `const CAPTIONS = [...]` before component declaration
@@ -128,7 +100,7 @@ export function injectAudioAndCaptionsIntoCode(
         end: Number(w.end.toFixed(2)),
       })),
     );
-    const captionsDeclaration = `// Auto-Captions from OpenAI Whisper\nconst CAPTIONS = ${minifiedWords};\n\n`;
+    const captionsDeclaration = `// Auto-Captions from HeyGen TTS\nconst CAPTIONS = ${minifiedWords};\n\n`;
 
     if (updated.includes("export const MyAnimation")) {
       updated = updated.replace("export const MyAnimation", `${captionsDeclaration}export const MyAnimation`);
@@ -154,13 +126,13 @@ export function injectAudioAndCaptionsIntoCode(
     if (absFillRegex.test(updated)) {
       updated = updated.replace(
         absFillRegex,
-        `$1\n      {/* OpenAI Voiceover Audio */}\n      <Audio src="${audioUrl}" />`,
+        `$1\n      {/* HeyGen Voiceover Audio */}\n      <Audio src="${audioUrl}" />`,
       );
     }
   }
 
   // 5. Clean previous <AnimatedCaptions ... /> if present
-  updated = updated.replace(/\s*\{\/\*\s*Real-time Whisper Kinetic Captions\s*\*\/\}[\s\S]*?<AnimatedCaptions\s+[^>]*\/>/g, "");
+  updated = updated.replace(/\s*\{\/\*\s*Word-synced Kinetic Captions\s*\*\/\}[\s\S]*?<AnimatedCaptions\s+[^>]*\/>/g, "");
   updated = updated.replace(/\s*<AnimatedCaptions\s+[^>]*\/>/g, "");
 
   // 6. Insert <AnimatedCaptions words={CAPTIONS} /> inside the root container before closing </AbsoluteFill>
@@ -169,7 +141,7 @@ export function injectAudioAndCaptionsIntoCode(
     if (closingAbsFill.test(updated)) {
       updated = updated.replace(
         closingAbsFill,
-        `\n      {/* Real-time Whisper Kinetic Captions */}\n      <AnimatedCaptions words={CAPTIONS} highlightColor="#f59e0b" />\n    $1`,
+        `\n      {/* Word-synced Kinetic Captions */}\n      <AnimatedCaptions words={CAPTIONS} highlightColor="#f59e0b" />\n    $1`,
       );
     }
   }
@@ -183,12 +155,23 @@ export function VoiceoverModal({
   durationInFrames,
   fps,
   onDurationChange,
-  initialVoice = "onyx",
+  initialVoice = "",
+  initialVoiceModel = "auto",
+  initialLanguage = "en",
   initialAutoCaption = true,
 }: VoiceoverModalProps) {
   const [open, setOpen] = useState(false);
   const [script, setScript] = useState("");
+  const [language, setLanguage] = useState<VoiceLanguageCode>(() =>
+    isVoiceLanguageCode(initialLanguage) ? initialLanguage : "en",
+  );
+  const [voiceModel, setVoiceModel] = useState<VoiceEngineId>(() =>
+    isVoiceEngineId(initialVoiceModel) ? initialVoiceModel : "auto",
+  );
   const [selectedVoice, setSelectedVoice] = useState(initialVoice);
+  const [voices, setVoices] = useState<VoiceOption[]>([]);
+  const [voicesLoading, setVoicesLoading] = useState(false);
+  const [voicesWarning, setVoicesWarning] = useState<string | null>(null);
   const [speed, setSpeed] = useState(1.0);
   const [withCaptions, setWithCaptions] = useState(initialAutoCaption);
   const [isGenerating, setIsGenerating] = useState(false);
@@ -198,6 +181,53 @@ export function VoiceoverModal({
   const [error, setError] = useState<string | null>(null);
   const [applied, setApplied] = useState(false);
   const audioRef = useRef<HTMLAudioElement | null>(null);
+
+  // Fetch the HeyGen catalog for the selected language.
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    setVoicesLoading(true);
+    setVoicesWarning(null);
+
+    fetch(`/api/voices?language=${language}`)
+      .then((res) => res.json())
+      .then((data: { voices?: VoiceOption[]; warning?: string | null }) => {
+        if (cancelled) return;
+        const list = data.voices ?? [];
+        setVoices(list);
+        setVoicesWarning(data.warning ?? null);
+        setSelectedVoice((current) =>
+          list.length > 0 && !list.some((v) => v.id === current)
+            ? list[0].id
+            : current,
+        );
+      })
+      .catch(() => {
+        if (!cancelled) setVoicesWarning("Could not load HeyGen voices.");
+      })
+      .finally(() => {
+        if (!cancelled) setVoicesLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [open, language]);
+
+  // Keep the selected voice compatible with the chosen engine.
+  const visibleVoices = useMemo(() => {
+    if (voiceModel === "auto") return voices;
+    const matched = voices.filter(
+      (v) => !v.engines || v.engines.length === 0 || v.engines.includes(voiceModel),
+    );
+    return matched.length > 0 ? matched : voices;
+  }, [voices, voiceModel]);
+
+  useEffect(() => {
+    if (visibleVoices.length > 0 && !visibleVoices.some((v) => v.id === selectedVoice)) {
+      setSelectedVoice(visibleVoices[0].id);
+    }
+  }, [visibleVoices, selectedVoice]);
 
   // Sync script when modal opens or code changes
   useEffect(() => {
@@ -228,6 +258,8 @@ export function VoiceoverModal({
         body: JSON.stringify({
           text: script.trim(),
           voice: selectedVoice,
+          engine: voiceModel,
+          language,
           speed: speed,
           withCaptions: withCaptions,
         }),
@@ -312,7 +344,7 @@ export function VoiceoverModal({
         <DialogHeader>
           <div className="flex items-center gap-2 text-primary font-semibold text-lg">
             <Mic className="w-5 h-5" />
-            <DialogTitle>OpenAI Voiceover & Auto-Captions (Whisper)</DialogTitle>
+            <DialogTitle>HeyGen Voiceover & Auto-Captions</DialogTitle>
           </div>
           <DialogDescription className="text-muted-foreground text-xs leading-relaxed">
             Generate professional voiceover narration and kinetic word-level subtitles synchronized with animation.
@@ -344,52 +376,105 @@ export function VoiceoverModal({
               rows={4}
               value={script}
               onChange={(e) => setScript(e.target.value)}
-              placeholder="Enter the voiceover narration script to be spoken by OpenAI TTS..."
+              placeholder="Enter the voiceover narration script to be spoken by HeyGen TTS..."
               className="w-full p-3 rounded-lg border border-border bg-input text-foreground text-sm font-sans focus:outline-none focus:border-primary resize-y leading-relaxed"
             />
             <p className="text-[11px] text-muted-foreground-dim">
-              Every word is automatically transcribed with millisecond precision timestamps by OpenAI Whisper-1.
+              Word-level timestamps come straight from the HeyGen speech API for caption sync.
             </p>
           </div>
 
-          {/* Voice Selector */}
+          {/* Language + Voice Model */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div className="flex flex-col gap-2">
+              <label
+                htmlFor="voice-language-select"
+                className="text-xs font-semibold uppercase tracking-wider text-muted-foreground"
+              >
+                Narration Language
+              </label>
+              <select
+                id="voice-language-select"
+                value={language}
+                onChange={(e) => setLanguage(e.target.value as VoiceLanguageCode)}
+                className="w-full h-9 px-2.5 rounded-lg border border-border bg-input text-foreground text-xs font-sans focus:outline-none focus:border-primary cursor-pointer"
+              >
+                {VOICE_LANGUAGES.map((l) => (
+                  <option key={l.id} value={l.id}>
+                    {l.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="flex flex-col gap-2">
+              <label
+                htmlFor="voice-model-select"
+                className="text-xs font-semibold uppercase tracking-wider text-muted-foreground"
+              >
+                Voice Model
+              </label>
+              <select
+                id="voice-model-select"
+                value={voiceModel}
+                onChange={(e) => setVoiceModel(e.target.value as VoiceEngineId)}
+                className="w-full h-9 px-2.5 rounded-lg border border-border bg-input text-foreground text-xs font-sans focus:outline-none focus:border-primary cursor-pointer"
+              >
+                {VOICE_MODELS.map((m) => (
+                  <option key={m.id} value={m.id}>
+                    {m.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          {/* HeyGen Voice Selector */}
           <div className="flex flex-col gap-2">
             <label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-              OpenAI Voice (TTS-1)
+              HeyGen Voice ({visibleVoices.length} available)
             </label>
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-              {VOICES.map((v) => {
-                const isSelected = selectedVoice === v.id;
-                return (
-                  <button
-                    key={v.id}
-                    type="button"
-                    onClick={() => setSelectedVoice(v.id)}
-                    className={`p-2.5 rounded-lg border text-left transition-all cursor-pointer ${isSelected
-                        ? "border-primary bg-primary/10 shadow-sm"
-                        : "border-border hover:border-border-hover bg-background/50"
-                      }`}
-                  >
-                    <div className="flex items-center justify-between mb-1">
-                      <span className="text-xs font-semibold text-foreground">
-                        {v.name}
-                      </span>
-                      <span
-                        className={`text-[9px] px-1.5 py-0.5 rounded ${isSelected
-                            ? "bg-primary text-black font-semibold"
-                            : "bg-background-elevated text-muted-foreground"
-                          }`}
-                      >
-                        {v.tag}
-                      </span>
-                    </div>
-                    <p className="text-[10px] text-muted-foreground leading-snug line-clamp-2">
-                      {v.desc}
-                    </p>
-                  </button>
-                );
-              })}
-            </div>
+            {voicesLoading ? (
+              <p className="text-[11px] text-muted-foreground">Loading HeyGen voices…</p>
+            ) : visibleVoices.length === 0 ? (
+              <p className="text-[11px] text-amber-500">
+                {voicesWarning ?? "No HeyGen voices available for this language."}
+              </p>
+            ) : (
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 max-h-56 overflow-y-auto">
+                {visibleVoices.map((v) => {
+                  const isSelected = selectedVoice === v.id;
+                  return (
+                    <button
+                      key={v.id}
+                      type="button"
+                      onClick={() => setSelectedVoice(v.id)}
+                      className={`p-2.5 rounded-lg border text-left transition-all cursor-pointer ${isSelected
+                          ? "border-primary bg-primary/10 shadow-sm"
+                          : "border-border hover:border-border-hover bg-background/50"
+                        }`}
+                    >
+                      <div className="flex items-center justify-between mb-1 gap-1">
+                        <span className="text-xs font-semibold text-foreground truncate">
+                          {v.name}
+                        </span>
+                        <span
+                          className={`text-[9px] px-1.5 py-0.5 rounded shrink-0 ${isSelected
+                              ? "bg-primary text-black font-semibold"
+                              : "bg-background-elevated text-muted-foreground"
+                            }`}
+                        >
+                          {v.tag}
+                        </span>
+                      </div>
+                      <p className="text-[10px] text-muted-foreground leading-snug line-clamp-2">
+                        {v.desc}
+                      </p>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
           </div>
 
           {/* Speed & Video Duration Sync Info */}
@@ -429,7 +514,7 @@ export function VoiceoverModal({
               <Subtitles className="w-4 h-4 text-primary" />
               <div>
                 <p className="text-xs font-semibold text-foreground">
-                  Enable Kinetic Auto-Captions (Whisper Word Timestamps)
+                  Enable Kinetic Auto-Captions (Word Timestamps)
                 </p>
                 <p className="text-[11px] text-muted-foreground">
                   Displays Bang Motion style animated subtitles highlighting each word as it is spoken.
@@ -481,7 +566,7 @@ export function VoiceoverModal({
                 <div className="flex flex-col gap-1.5 pt-1 border-t border-border/50">
                   <div className="flex items-center justify-between">
                     <span className="text-[11px] font-semibold text-emerald-400 flex items-center gap-1">
-                      <Sparkles className="w-3 h-3" /> {words.length} Words Synchronized (Whisper)
+                      <Sparkles className="w-3 h-3" /> {words.length} Words Synchronized
                     </span>
                     <span className="text-[10px] text-muted-foreground">
                       Range: {words[0]?.start.toFixed(1)}s - {words[words.length - 1]?.end.toFixed(1)}s
@@ -535,7 +620,7 @@ export function VoiceoverModal({
             {isGenerating ? (
               <>
                 <span className="w-4 h-4 border-2 border-primary-foreground border-t-transparent rounded-full animate-spin mr-2" />
-                Generating Speech & Whisper...
+                Generating Speech...
               </>
             ) : (
               <>

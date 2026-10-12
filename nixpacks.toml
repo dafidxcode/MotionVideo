@@ -1,0 +1,14 @@
+# Coolify / nixpacks build configuration.
+#
+# Without this, nixpacks defaults to Node 18 and `next build` aborts with:
+#   "You are using Node.js 18.20.5. For Next.js, Node.js version ">=20.9.0" is required."
+# next@16 requires Node >= 20.9.0, and @tailwindcss/oxide, @vercel/oidc and the
+# @aws-sdk/* packages pulled in by Remotion Lambda all require >= 20 as well.
+#
+# Node is pinned in three places on purpose - nixpacks resolves the first one it
+# finds, and they must agree:
+#   1. nixpacks.toml   [phases.setup] nixPkgs  (explicit build-time package)
+#   2. .nvmrc                                  (source of truth for nvm/asdf/mise)
+#   3. package.json engines.node               (Vercel, Railway, Heroku, npm)
+[phases.setup]
+nixPkgs = ["nodejs_22"]

@@ -2,7 +2,7 @@ import { getCombinedSkillContent } from "@/skills";
 import type { SkillName } from "@/skills";
 import { SKILL_DETECTION_PROMPT, SKILL_NAMES } from "@/skills";
 import {
-  getAnthropicFastModel,
+  getShiteruFastModel,
   getOpenAIFastModel,
   getProviderOptions,
   resolveLlm,
@@ -407,10 +407,9 @@ export async function POST(req: Request) {
     }
   }
 
-  // Resolve LLM provider + model — FLEKSIBEL dual-provider:
-  // - model "claude-*" -> Anthropic, "gpt-*"/"o*"/"chatgpt*" -> OpenAI
-  //   (pilihan user SELALU menang atas ENV)
-  // - kosong -> pakai LLM_PROVIDER + ANTHROPIC_MODEL / OPENAI_MODEL dari ENV
+  // Resolve LLM provider + model — Shiteru AI (OpenAI-compatible) & OpenAI:
+  // - pilihan user di UI (daftar model Shiteru) SELALU dihormati
+  // - kosong -> pakai LLM_PROVIDER + SHITERU_MODEL / OPENAI_MODEL dari ENV
   let resolved;
   try {
     resolved = resolveLlm(model);
@@ -429,12 +428,11 @@ export async function POST(req: Request) {
   const { modelName, provider } = resolved;
 
   // Fast/cheap model dari provider YANG SAMA untuk validasi & deteksi skill
-  // (mengikuti pilihan user, bukan ENV) — semua model multimodal text/image/video.
   let fastLlm;
   try {
     fastLlm = resolveLlm(
-      provider === "anthropic"
-        ? getAnthropicFastModel()
+      provider === "shiteru"
+        ? getShiteruFastModel()
         : getOpenAIFastModel(),
     );
   } catch {
@@ -449,6 +447,7 @@ export async function POST(req: Request) {
         system: VALIDATION_PROMPT,
         prompt: `User prompt: "${prompt}"`,
         schema: z.object({ valid: z.boolean() }),
+        ...getProviderOptions(fastLlm),
       });
 
       if (!validationResult.object.valid) {
@@ -477,6 +476,7 @@ export async function POST(req: Request) {
       schema: z.object({
         skills: z.array(z.enum(SKILL_NAMES)),
       }),
+      ...getProviderOptions(fastLlm),
     });
     detectedSkills = skillResult.object.skills;
     console.log("Detected skills:", detectedSkills);
@@ -645,6 +645,7 @@ Analyze the request and decide: use targeted edits (type: "edit") for small chan
         system: FOLLOW_UP_SYSTEM_PROMPT + languageInstruction,
         messages: editMessages,
         schema: FollowUpResponseSchema,
+        ...getProviderOptions(resolved),
       });
 
       const response = editResult.object;

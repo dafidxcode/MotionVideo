@@ -1,4 +1,4 @@
-export type LlmProviderName = "anthropic" | "openai";
+export type LlmProviderName = "shiteru" | "openai";
 export type LlmModality = "text" | "image" | "video";
 
 export interface ModelOption {
@@ -11,63 +11,65 @@ export interface ModelOption {
 }
 
 /**
- * Katalog model multimodal TERBARU (Okt 2026) — TEXT + IMAGE + VIDEO-reference.
- * ID terverifikasi dari docs resmi OpenAI & Anthropic:
- * - ANTHROPIC Claude: vision native (image). VIDEO diterima sebagai
- *   frame-images yang diekstrak di client (lihat useImageAttachments).
- * - OPENAI GPT-6: input text+image native (docs resmi). VIDEO dipahami
- *   sebagai urutan frame-images. Reasoning: none/low/medium/high/xhigh/max.
- * Pilihan user di UI selalu menang — provider di-resolve dari prefix
- * model ID, BUKAN dari ENV. ENV (LLM_PROVIDER) hanya default saat
- * client tidak mengirim model.
+ * Katalog model multimodal SHITERU AI (OpenAI-compatible: https://shiteru.id/v1).
+ * Mendukung modalitas input: TEXT, IMAGE, dan VIDEO (dieksrak ke sequence frame-images).
  */
 export const MODELS: ModelOption[] = [
   {
-    id: "claude-opus-5-5",
-    name: "Claude Opus 5.5 (Flagship)",
-    provider: "anthropic",
+    id: "gpt-6.1-sol",
+    name: "GPT 6.1 Sol (Flagship)",
+    provider: "shiteru",
     modalities: ["text", "image", "video"],
     description:
-      "Most capable Opus for coding, agents & knowledge work. 1M context.",
+      "Latest flagship model from Shiteru AI for motion graphics & code generation.",
   },
   {
-    id: "claude-sonnet-5",
-    name: "Claude Sonnet 5 (Recommended)",
-    provider: "anthropic",
+    id: "gpt-6-astra",
+    name: "GPT 6 Astra",
+    provider: "shiteru",
     modalities: ["text", "image", "video"],
     description:
-      "Best speed/intelligence balance for everyday agentic work. 1M context.",
+      "High-capability model for complex animations and visual storytelling.",
   },
   {
-    id: "claude-haiku-4-5-20251001",
-    name: "Claude Haiku 4.5 (Fast)",
-    provider: "anthropic",
-    modalities: ["text", "image", "video"],
-    description: "Fastest, near-frontier quality at lowest cost.",
-  },
-  {
-    id: "gpt-6-astra:high",
-    name: "GPT-6 Astra High [OpenAI]",
-    provider: "openai",
+    id: "gpt-6-sol",
+    name: "GPT 6 Sol",
+    provider: "shiteru",
     modalities: ["text", "image", "video"],
     description:
-      "OpenAI flagship for hardest end-to-end work. 1.05M context.",
-  },
-  {
-    id: "gpt-6-sol:medium",
-    name: "GPT-6 Sol Medium [OpenAI]",
-    provider: "openai",
-    modalities: ["text", "image", "video"],
-    description:
-      "Frontier coding & agentic workflows, balanced cost. 1.05M context.",
+      "Balanced performance and intelligence for motion graphics workflows.",
   },
   {
     id: "gpt-6-luna",
-    name: "GPT-6 Luna [OpenAI]",
-    provider: "openai",
+    name: "GPT 6 Luna (Fast)",
+    provider: "shiteru",
     modalities: ["text", "image", "video"],
     description:
-      "Most efficient GPT-6 for focused high-volume tasks. 1.05M context.",
+      "Ultra-fast generation for rapid animation previews and iterations.",
+  },
+  {
+    id: "gpt-5.6-sol",
+    name: "GPT 5.6 Sol",
+    provider: "shiteru",
+    modalities: ["text", "image", "video"],
+    description:
+      "High-efficiency model for motion graphics and visual components.",
+  },
+  {
+    id: "gpt-5.6-terra",
+    name: "GPT 5.6 Terra",
+    provider: "shiteru",
+    modalities: ["text", "image", "video"],
+    description:
+      "Specialized model for structured animation sequences and layout design.",
+  },
+  {
+    id: "gpt-5.6-luna",
+    name: "GPT 5.6 Luna",
+    provider: "shiteru",
+    modalities: ["text", "image", "video"],
+    description:
+      "Lightweight fast model optimized for quick animations and edits.",
   },
 ];
 

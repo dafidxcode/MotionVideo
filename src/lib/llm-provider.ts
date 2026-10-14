@@ -1,16 +1,26 @@
-import { createAnthropic } from "@ai-sdk/anthropic";
 import { createOpenAI } from "@ai-sdk/openai";
 import type { LanguageModel } from "ai";
 
-export type LlmProviderName = "anthropic" | "openai";
+export type LlmProviderName = "shiteru" | "openai";
 export type LlmModality = "text" | "image" | "video";
 
-// Default models — bisa di-override dari ENV via ANTHROPIC_MODEL / OPENAI_MODEL
-// (ID terverifikasi Okt 2026 dari docs resmi OpenAI & Anthropic)
-export const DEFAULT_ANTHROPIC_MODEL = "claude-opus-5-5";
-export const DEFAULT_ANTHROPIC_FAST_MODEL = "claude-haiku-4-5-20251001";
-export const DEFAULT_OPENAI_MODEL = "gpt-6-astra";
+// Default models — Shiteru AI (OpenAI-compatible: https://shiteru.id/v1)
+export const DEFAULT_SHITERU_MODEL = "gpt-6.1-sol";
+export const DEFAULT_SHITERU_FAST_MODEL = "gpt-6-luna";
+export const DEFAULT_SHITERU_BASE_URL = "https://shiteru.id/v1";
+
+export const DEFAULT_OPENAI_MODEL = "gpt-6.1-sol";
 export const DEFAULT_OPENAI_FAST_MODEL = "gpt-6-luna";
+
+export const SHITERU_MODEL_IDS = new Set([
+  "gpt-5.6-sol",
+  "gpt-5.6-terra",
+  "gpt-5.6-luna",
+  "gpt-6-astra",
+  "gpt-6-sol",
+  "gpt-6-luna",
+  "gpt-6.1-sol",
+]);
 
 function env(name: string): string | undefined {
   const v = process.env[name];
@@ -20,27 +30,29 @@ function env(name: string): string | undefined {
 
 /**
  * Provider LLM default, dibaca DARI ENV.
- * Prioritas: LLM_PROVIDER > AI_PROVIDER > AI_LLM_PROVIDER > "anthropic".
- * NOTE: ini HANYA default. Pilihan model eksplisit dari user
- * (prefix "claude-" / "gpt-") SELALU menang atas ENV — lihat resolveLlm.
+ * Prioritas: LLM_PROVIDER > AI_PROVIDER > AI_LLM_PROVIDER > "shiteru".
  */
 export function getConfiguredProvider(): LlmProviderName {
   const raw = (
     env("LLM_PROVIDER") ??
     env("AI_PROVIDER") ??
     env("AI_LLM_PROVIDER") ??
-    "anthropic"
+    "shiteru"
   ).toLowerCase();
-  if (raw === "openai" || raw === "gpt") return "openai";
-  return "anthropic";
+  if (raw === "openai") return "openai";
+  return "shiteru";
 }
 
-export function getAnthropicDefaultModel(): string {
-  return env("ANTHROPIC_MODEL") ?? DEFAULT_ANTHROPIC_MODEL;
+export function getShiteruDefaultModel(): string {
+  return env("SHITERU_MODEL") ?? DEFAULT_SHITERU_MODEL;
 }
 
-export function getAnthropicFastModel(): string {
-  return env("ANTHROPIC_FAST_MODEL") ?? DEFAULT_ANTHROPIC_FAST_MODEL;
+export function getShiteruFastModel(): string {
+  return env("SHITERU_FAST_MODEL") ?? DEFAULT_SHITERU_FAST_MODEL;
+}
+
+export function getShiteruBaseUrl(): string {
+  return env("SHITERU_BASE_URL") ?? DEFAULT_SHITERU_BASE_URL;
 }
 
 export function getOpenAIDefaultModel(): string {
@@ -51,8 +63,9 @@ export function getOpenAIFastModel(): string {
   return env("OPENAI_FAST_MODEL") ?? DEFAULT_OPENAI_FAST_MODEL;
 }
 
-export function isAnthropicModelId(id: string): boolean {
-  return id.startsWith("claude-");
+export function isShiteruModelId(id: string): boolean {
+  const base = id.split(":")[0];
+  return SHITERU_MODEL_IDS.has(base) || id.startsWith("shiteru-");
 }
 
 export function isOpenAIModelId(id: string): boolean {
@@ -66,14 +79,13 @@ export function isOpenAIModelId(id: string): boolean {
 }
 
 /**
- * Kapabilitas input per model. Semua model di katalog adalah multimodal:
+ * Kapabilitas input per model. Semua model Shiteru di katalog adalah multimodal:
  * TEXT selalu didukung; IMAGE didukung native (vision); VIDEO didukung
  * sebagai urutan frame-images yang diekstrak di client.
  */
 export function getModelModalities(modelName: string): LlmModality[] {
   if (!modelName) return ["text"];
-  // Semua model generasi saat ini dari kedua provider bersifat vision-capable.
-  if (isAnthropicModelId(modelName) || isOpenAIModelId(modelName)) {
+  if (isShiteruModelId(modelName) || isOpenAIModelId(modelName)) {
     return ["text", "image", "video"];
   }
   return ["text"];
@@ -95,11 +107,10 @@ export interface ResolvedLlm {
 }
 
 /**
- * Resolve model LLM — FLEKSIBEL dual-provider:
- * 1. Kalau `requested` diawali "claude-" -> Anthropic (menang atas ENV).
- * 2. Kalau diawali "gpt-"/"o1"/"o3"/"chatgpt" -> OpenAI (menang atas ENV).
- * 3. Kalau kosong / tak dikenal -> pakai provider + default model dari ENV.
- * Format "model:effort" didukung (effort hanya diteruskan ke OpenAI).
+ * Resolve model LLM — Shiteru AI (OpenAI-compatible) & OpenAI fallback:
+ * 1. Kalau requested ada di daftar model Shiteru -> Shiteru AI.
+ * 2. Kalau kosong / tak dikenal -> pakai provider + default model dari ENV.
+ * Base URL Shiteru default ke https://shiteru.id/v1.
  */
 export function resolveLlm(
   requested?: string,
@@ -111,23 +122,19 @@ export function resolveLlm(
   let provider: LlmProviderName = configured;
   let modelName: string;
 
-  if (rawName && isAnthropicModelId(rawName)) {
-    // Pilihan user eksplisit -> Anthropic, apa pun isi ENV.
-    provider = "anthropic";
+  if (rawName && isShiteruModelId(rawName)) {
+    provider = "shiteru";
     modelName = rawName;
   } else if (rawName && isOpenAIModelId(rawName)) {
-    // Pilihan user eksplisit -> OpenAI, apa pun isi ENV.
-    provider = "openai";
+    provider = configured === "openai" ? "openai" : "shiteru";
     modelName = rawName;
   } else if (rawName) {
-    // Model ID tidak dikenal — anggap milik provider yang dikonfigurasi.
     modelName = rawName;
   } else {
-    // Tidak ada model dari client -> pakai default dari ENV.
-    if (provider === "anthropic") {
+    if (provider === "shiteru") {
       modelName = opts?.fast
-        ? getAnthropicFastModel()
-        : getAnthropicDefaultModel();
+        ? getShiteruFastModel()
+        : getShiteruDefaultModel();
     } else {
       modelName = opts?.fast
         ? getOpenAIFastModel()
@@ -137,50 +144,58 @@ export function resolveLlm(
 
   const modalities = getModelModalities(modelName);
 
-  if (provider === "anthropic") {
-    const apiKey = env("ANTHROPIC_API_KEY");
+  if (provider === "shiteru") {
+    const apiKey = env("SHITERU_API_KEY");
     if (!apiKey) {
       throw new Error(
-        'The environment variable "ANTHROPIC_API_KEY" is not set. Add it to your .env file and try again (atau pilih model [OpenAI] bila hanya punya OPENAI_API_KEY).',
+        'The environment variable "SHITERU_API_KEY" is not set. Add it to your .env file and try again.',
       );
     }
-    const anthropic = createAnthropic({ apiKey });
+    const baseURL = getShiteruBaseUrl();
+    const shiteru = createOpenAI({ apiKey, baseURL });
     return {
       provider,
       modelName,
       reasoningEffort,
       modalities,
-      model: anthropic(modelName),
+      model: shiteru.chat(modelName),
     };
   }
 
-  const apiKey = env("OPENAI_API_KEY");
+  const apiKey = env("OPENAI_API_KEY") ?? env("SHITERU_API_KEY");
   if (!apiKey) {
     throw new Error(
-      'The environment variable "OPENAI_API_KEY" is not set. Add it to your .env file and try again (atau pilih model Claude bila hanya punya ANTHROPIC_API_KEY).',
+      'The environment variable "OPENAI_API_KEY" or "SHITERU_API_KEY" is not set. Add it to your .env file and try again.',
     );
   }
-  const openai = createOpenAI({ apiKey });
+  const baseURL =
+    env("OPENAI_BASE_URL") ??
+    (env("OPENAI_API_KEY") ? undefined : getShiteruBaseUrl());
+  const openai = createOpenAI({ apiKey, baseURL });
   return {
     provider,
     modelName,
     reasoningEffort,
     modalities,
-    model: openai(modelName),
+    model: openai.chat(modelName),
   };
 }
 
 /**
- * ProviderOptions untuk streamText — hanya OpenAI yang butuh reasoningEffort.
- * Anthropic tidak perlu opsi khusus (thinking opsional, di-skip agar stabil).
+ * ProviderOptions untuk streamText / generateObject.
+ * Diset structuredOutputs: false agar proxy OpenAI-compatible seperti Shiteru
+ * menggunakan standard JSON mode (response_format: json_object).
  */
 export function getProviderOptions(resolved: ResolvedLlm) {
-  if (resolved.provider === "openai" && resolved.reasoningEffort) {
-    return {
-      providerOptions: {
-        openai: { reasoningEffort: resolved.reasoningEffort },
-      },
-    };
+  const openaiOpts: Record<string, any> = {
+    structuredOutputs: false,
+  };
+  if (resolved.reasoningEffort) {
+    openaiOpts.reasoningEffort = resolved.reasoningEffort;
   }
-  return {};
+  return {
+    providerOptions: {
+      openai: openaiOpts,
+    },
+  };
 }

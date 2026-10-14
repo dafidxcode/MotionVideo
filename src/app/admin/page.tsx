@@ -5,23 +5,27 @@ import {
   Activity,
   AlertTriangle,
   ArrowRight,
-  Check,
   CheckCircle2,
+  CircleDollarSign,
   Coins,
-  Crown,
+  Cpu,
+  ExternalLink,
+  Film,
+  KeyRound,
+  Layers,
   Loader2,
   MessageSquare,
   RefreshCw,
   Save,
   Search,
+  Server,
   ShieldAlert,
+  ShieldCheck,
+  Sliders,
   Sparkles,
   Users,
-  Video,
-  Zap,
 } from "lucide-react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import React, { useCallback, useEffect, useState } from "react";
 
 const ALLOWED_ADMIN_EMAILS = [
@@ -78,11 +82,33 @@ interface UserProfileItem {
 
 export default function AdminPage() {
   const { user, isLoading: authLoading, logout } = useAuth();
-  const router = useRouter();
 
   const [activeTab, setActiveTab] = useState<
-    "overview" | "activities" | "settings" | "users" | "renders"
+    "overview" | "activities" | "settings" | "users" | "renders" | "shiteru"
   >("overview");
+
+  // Shiteru Quota State
+  const [shiteruLoading, setShiteruLoading] = useState(false);
+  const [shiteruData, setShiteruData] = useState<any>(null);
+  const [shiteruError, setShiteruError] = useState<string | null>(null);
+
+  const checkShiteruQuota = async () => {
+    setShiteruLoading(true);
+    setShiteruError(null);
+    try {
+      const res = await fetch("/api/admin/shiteru-quota");
+      const json = await res.json();
+      if (!res.ok || json.error) {
+        setShiteruError(json.error || "Failed to fetch Shiteru quota");
+      } else {
+        setShiteruData(json);
+      }
+    } catch (err: any) {
+      setShiteruError(err.message || "Network error");
+    } finally {
+      setShiteruLoading(false);
+    }
+  };
 
   // Admin Data States
   const [stats, setStats] = useState<AdminStats | null>(null);
@@ -283,60 +309,57 @@ export default function AdminPage() {
     return (
       <div className="h-screen w-screen bg-[#0A0A0B] flex items-center justify-center text-[#F5F5F7] font-sans">
         <div className="flex flex-col items-center gap-3">
-          <Loader2 className="w-8 h-8 animate-spin text-amber-400" />
-          <p className="text-xs text-[#9A9AA2]">Verifying administrator credentials…</p>
+          <Loader2 className="w-8 h-8 animate-spin text-[#A1A1AA]" />
+          <p className="text-xs text-[#8E8E93]">Verifying administrator credentials…</p>
         </div>
       </div>
     );
   }
 
-  // Access Denied Screen (Strictly only the 2 authorized Gmails)
+  // Access Denied Screen (Strictly only authorized Gmails)
   if (!user || !isAdmin) {
     return (
       <div className="h-screen w-screen bg-[#0A0A0B] flex items-center justify-center p-4 font-sans text-[#F5F5F7]">
-        <div className="max-w-md w-full bg-[#18181B] border border-[#28282C] rounded-2xl p-6 shadow-2xl text-center">
-          <div className="w-14 h-14 rounded-2xl bg-rose-500/10 border border-rose-500/20 text-rose-400 mx-auto flex items-center justify-center mb-4">
-            <ShieldAlert size={28} />
+        <div className="max-w-md w-full bg-[#141416] border border-[#28282C] rounded-2xl p-6 shadow-xl text-center">
+          <div className="w-12 h-12 rounded-xl bg-[#1C1C20] border border-[#28282C] text-rose-400 mx-auto flex items-center justify-center mb-4">
+            <ShieldAlert size={24} />
           </div>
-          <h1 className="text-xl font-bold text-white mb-2">Access Denied</h1>
-          <p className="text-xs text-[#9A9AA2] leading-relaxed mb-4">
+          <h1 className="text-lg font-bold text-white mb-2">Access Denied</h1>
+          <p className="text-xs text-[#8E8E93] leading-relaxed mb-4">
             The Swdbot Motion Studio Admin Panel is strictly restricted to authorized administrators:
           </p>
-          <div className="bg-[#1F1F23] rounded-xl p-3 border border-[#28282C] mb-5 text-left">
-            <span className="text-[10px] uppercase font-mono text-[#6E6E76] font-bold block mb-1">
+          <div className="bg-[#18181B] rounded-xl p-3 border border-[#28282C] mb-5 text-left">
+            <span className="text-[10px] uppercase font-mono text-[#71717A] font-semibold block mb-1">
               Authorized Accounts:
             </span>
             <div className="space-y-1">
               {ALLOWED_ADMIN_EMAILS.map((em) => (
-                <div key={em} className="text-xs font-mono text-amber-300 flex items-center gap-1.5">
-                  <span className="w-1.5 h-1.5 rounded-full bg-amber-400" />
+                <div key={em} className="text-xs font-mono text-[#D4D4D8] flex items-center gap-1.5">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
                   {em}
                 </div>
               ))}
             </div>
             {user?.email && (
-              <div className="mt-2 pt-2 border-t border-[#28282C] text-[11px] text-[#9A9AA2]">
+              <div className="mt-2 pt-2 border-t border-[#28282C] text-[11px] text-[#8E8E93]">
                 Your signed-in email: <span className="text-white font-mono">{user.email}</span>
               </div>
             )}
           </div>
           <div className="flex items-center gap-3">
-            <Link
-              href="/"
-              className="flex-1 py-2.5 rounded-xl bg-[#1F1F23] hover:bg-[#26262B] border border-[#28282C] text-xs font-semibold text-[#F5F5F7] transition-colors"
-            >
-              Back to Studio
-            </Link>
             <button
               type="button"
-              onClick={async () => {
-                await logout();
-                router.push("/login");
-              }}
-              className="flex-1 py-2.5 rounded-xl bg-amber-400 hover:bg-amber-300 text-black text-xs font-semibold transition-colors"
+              onClick={() => logout()}
+              className="flex-1 px-4 py-2 rounded-xl bg-[#1F1F23] hover:bg-[#26262B] text-xs font-semibold text-white border border-[#28282C] transition-colors"
             >
-              Switch Account
+              Sign in with another account
             </button>
+            <Link
+              href="/"
+              className="flex-1 px-4 py-2 rounded-xl bg-white hover:bg-neutral-200 text-xs font-semibold text-black transition-colors"
+            >
+              Go to Studio
+            </Link>
           </div>
         </div>
       </div>
@@ -377,8 +400,8 @@ export default function AdminPage() {
 
   return (
     <div className="fixed inset-0 h-screen w-screen overflow-y-auto overflow-x-hidden bg-[#0A0A0B] text-[#F5F5F7] font-sans flex flex-col">
-      {/* ── Top Header ──────────────────────────────────────────────────────── */}
-      <header className="sticky top-0 z-40 bg-[#0A0A0B]/90 backdrop-blur-md border-b border-[#28282C] px-4 sm:px-8 py-3.5 flex flex-wrap sm:flex-nowrap items-center justify-between gap-3 shrink-0">
+      {/* ── Top Header (Unified with Frontend) ──────────────────────────────────────── */}
+      <header className="sticky top-0 z-40 bg-[#0A0A0B]/80 backdrop-blur-md border-b border-[#28282C] px-4 sm:px-8 py-3.5 flex flex-wrap sm:flex-nowrap items-center justify-between gap-3 shrink-0">
         <div className="flex items-center gap-3">
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
@@ -386,41 +409,41 @@ export default function AdminPage() {
             alt="Swdbot"
             className="w-7 h-7 sm:w-8 sm:h-8 object-contain shrink-0"
           />
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2.5">
             <span className="text-base sm:text-lg font-bold text-white tracking-tight">
               Swdbot Motion Studio
             </span>
-            <span className="px-2 py-0.5 rounded-md bg-amber-400 text-black text-[10px] font-extrabold uppercase tracking-wider font-mono">
+            <span className="px-2 py-0.5 rounded-full bg-[#1C1C20] border border-[#28282C] text-[#A1A1AA] text-[10px] font-mono tracking-wider uppercase font-semibold">
               Admin Panel
             </span>
           </div>
         </div>
 
-        <div className="flex items-center gap-2 sm:gap-3 ml-auto">
-
+        <div className="flex items-center gap-2 sm:gap-2.5 ml-auto">
           <button
             type="button"
             onClick={() => fetchData()}
             disabled={isLoadingData}
-            className="p-2 rounded-xl bg-[#18181B] border border-[#28282C] text-[#9A9AA2] hover:text-white hover:bg-[#1F1F23] transition-colors cursor-pointer"
+            className="w-8 h-8 rounded-full bg-[#1F1F23] hover:bg-[#26262B] text-[#9A9AA2] hover:text-white border border-[#28282C] flex items-center justify-center transition-colors cursor-pointer"
             title="Refresh now"
+            aria-label="Refresh now"
           >
             <RefreshCw
-              size={15}
-              className={isLoadingData ? "animate-spin text-amber-400" : ""}
+              size={14}
+              className={isLoadingData ? "animate-spin text-white" : ""}
             />
           </button>
 
           {/* Admin Email Pill */}
           <div className="hidden md:flex items-center px-3 py-1.5 rounded-full bg-[#1F1F23] border border-[#28282C]">
-            <span className="text-xs font-medium text-white font-mono">
+            <span className="text-xs font-medium text-[#D4D4D8] font-mono">
               {user.email}
             </span>
           </div>
 
           <Link
             href="/"
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-amber-400 hover:bg-amber-300 text-black text-xs font-semibold transition-colors shadow-md shadow-amber-400/20"
+            className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-full bg-white hover:bg-neutral-200 text-black text-xs font-semibold transition-all shadow-sm"
           >
             <span>Studio</span>
             <ArrowRight size={13} />
@@ -430,107 +453,108 @@ export default function AdminPage() {
 
       {/* ── Main Dashboard Content ──────────────────────────────────────────── */}
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-8 py-6 pb-40 space-y-7">
-        {/* Metric Cards Row - 4 Luxury Glassmorphic Cards */}
+        {/* Metric Cards Row - Minimalist, Professional, Unified Dark Cards */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           {/* Card 1: Total VIP Users */}
-          <div className="relative group overflow-hidden rounded-2xl p-5 bg-gradient-to-br from-[#121626]/90 via-[#10121C]/90 to-[#0C0D14]/90 border border-blue-500/25 shadow-xl shadow-blue-950/20 backdrop-blur-xl hover:border-blue-400/50 hover:shadow-blue-500/10 transition-all duration-300">
-            <div className="absolute top-0 right-0 w-28 h-28 bg-blue-500/10 rounded-full blur-2xl pointer-events-none group-hover:bg-blue-500/20 transition-all" />
-            <div className="flex items-center justify-between mb-3 relative z-10">
-              <span className="text-[11px] font-bold text-blue-300 uppercase tracking-wider font-mono">
+          <div className="relative rounded-2xl p-5 bg-[#141416] border border-[#28282C] hover:border-[#38383E] transition-all shadow-sm">
+            <div className="flex items-center justify-between mb-3">
+              <span className="text-[11px] font-medium text-[#8E8E93] uppercase tracking-wider font-mono">
                 VIP Members
               </span>
-              <div className="w-8 h-8 rounded-xl bg-blue-500/15 border border-blue-500/30 flex items-center justify-center text-blue-400">
-                <Users size={16} />
+              <div className="w-8 h-8 rounded-xl bg-[#1C1C20] border border-[#28282C] flex items-center justify-center text-[#A1A1AA]">
+                <ShieldCheck size={16} />
               </div>
             </div>
-            <div className="relative z-10">
-              <p className="text-3xl font-black text-white font-mono tracking-tight">
+            <div>
+              <p className="text-3xl font-bold text-white font-mono tracking-tight">
                 {stats?.totalVipUsers ?? filteredUsers.length}
               </p>
-              <div className="flex items-center gap-1.5 mt-1 text-[11px] text-emerald-400 font-semibold">
-                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                <span>Active Swdbot Accounts</span>
+              <div className="flex items-center gap-1.5 mt-1.5 text-[11px] text-[#8E8E93]">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+                <span>Active Accounts</span>
               </div>
             </div>
           </div>
 
           {/* Card 2: Total Credits Deducted */}
-          <div className="relative group overflow-hidden rounded-2xl p-5 bg-gradient-to-br from-[#211A10]/90 via-[#18140D]/90 to-[#100E08]/90 border border-amber-500/25 shadow-xl shadow-amber-950/20 backdrop-blur-xl hover:border-amber-400/50 hover:shadow-amber-500/10 transition-all duration-300">
-            <div className="absolute top-0 right-0 w-28 h-28 bg-amber-500/10 rounded-full blur-2xl pointer-events-none group-hover:bg-amber-500/20 transition-all" />
-            <div className="flex items-center justify-between mb-3 relative z-10">
-              <span className="text-[11px] font-bold text-amber-300 uppercase tracking-wider font-mono">
+          <div className="relative rounded-2xl p-5 bg-[#141416] border border-[#28282C] hover:border-[#38383E] transition-all shadow-sm">
+            <div className="flex items-center justify-between mb-3">
+              <span className="text-[11px] font-medium text-[#8E8E93] uppercase tracking-wider font-mono">
                 Credits Deducted
               </span>
-              <div className="w-8 h-8 rounded-xl bg-amber-500/15 border border-amber-500/30 flex items-center justify-center text-amber-400">
+              <div className="w-8 h-8 rounded-xl bg-[#1C1C20] border border-[#28282C] flex items-center justify-center text-[#A1A1AA]">
                 <Coins size={16} />
               </div>
             </div>
-            <div className="relative z-10">
-              <p className="text-3xl font-black text-amber-300 font-mono tracking-tight">
+            <div>
+              <p className="text-3xl font-bold text-white font-mono tracking-tight">
                 {stats?.totalCreditsCharged ?? 0}
               </p>
-              <div className="flex items-center gap-1.5 mt-1 text-[11px] text-amber-200/70">
+              <div className="flex items-center gap-1.5 mt-1.5 text-[11px] text-[#8E8E93]">
                 <span>Total system consumption</span>
               </div>
             </div>
           </div>
 
           {/* Card 3: Service Developer Royalty (50%) */}
-          <div className="relative group overflow-hidden rounded-2xl p-5 bg-gradient-to-br from-[#0F1E17]/90 via-[#0B1510]/90 to-[#080E0B]/90 border border-emerald-500/25 shadow-xl shadow-emerald-950/20 backdrop-blur-xl hover:border-emerald-400/50 hover:shadow-emerald-500/10 transition-all duration-300">
-            <div className="absolute top-0 right-0 w-28 h-28 bg-emerald-500/10 rounded-full blur-2xl pointer-events-none group-hover:bg-emerald-500/20 transition-all" />
-            <div className="flex items-center justify-between mb-3 relative z-10">
-              <span className="text-[11px] font-bold text-emerald-300 uppercase tracking-wider font-mono">
+          <div className="relative rounded-2xl p-5 bg-[#141416] border border-[#28282C] hover:border-[#38383E] transition-all shadow-sm">
+            <div className="flex items-center justify-between mb-3">
+              <span className="text-[11px] font-medium text-[#8E8E93] uppercase tracking-wider font-mono">
                 Dev Royalty (50%)
               </span>
-              <div className="w-8 h-8 rounded-xl bg-emerald-500/15 border border-emerald-500/30 flex items-center justify-center text-emerald-400">
-                <Zap size={16} />
+              <div className="w-8 h-8 rounded-xl bg-[#1C1C20] border border-[#28282C] flex items-center justify-center text-[#A1A1AA]">
+                <CircleDollarSign size={16} />
               </div>
             </div>
-            <div className="relative z-10">
-              <p className="text-3xl font-black text-emerald-400 font-mono tracking-tight">
+            <div>
+              <p className="text-3xl font-bold text-white font-mono tracking-tight">
                 RM {(stats?.developerFeeCollectedRM ?? 0).toFixed(2)}
               </p>
-              <div className="flex items-center gap-1.5 mt-1 text-[11px] text-emerald-300/80 font-medium">
-                <span>Logged to Swdbot Redemptions</span>
+              <div className="flex items-center gap-1.5 mt-1.5 text-[11px] text-[#8E8E93]">
+                <span>Logged to Redemptions</span>
               </div>
             </div>
           </div>
 
           {/* Card 4: Total Renders & Generations */}
-          <div className="relative group overflow-hidden rounded-2xl p-5 bg-gradient-to-br from-[#1E1328]/90 via-[#150D1C]/90 to-[#0E0914]/90 border border-purple-500/25 shadow-xl shadow-purple-950/20 backdrop-blur-xl hover:border-purple-400/50 hover:shadow-purple-500/10 transition-all duration-300">
-            <div className="absolute top-0 right-0 w-28 h-28 bg-purple-500/10 rounded-full blur-2xl pointer-events-none group-hover:bg-purple-500/20 transition-all" />
-            <div className="flex items-center justify-between mb-3 relative z-10">
-              <span className="text-[11px] font-bold text-purple-300 uppercase tracking-wider font-mono">
+          <div className="relative rounded-2xl p-5 bg-[#141416] border border-[#28282C] hover:border-[#38383E] transition-all shadow-sm">
+            <div className="flex items-center justify-between mb-3">
+              <span className="text-[11px] font-medium text-[#8E8E93] uppercase tracking-wider font-mono">
                 Jobs Completed
               </span>
-              <div className="w-8 h-8 rounded-xl bg-purple-500/15 border border-purple-500/30 flex items-center justify-center text-purple-400">
-                <Video size={16} />
+              <div className="w-8 h-8 rounded-xl bg-[#1C1C20] border border-[#28282C] flex items-center justify-center text-[#A1A1AA]">
+                <Layers size={16} />
               </div>
             </div>
-            <div className="relative z-10">
-              <p className="text-3xl font-black text-purple-300 font-mono tracking-tight">
+            <div>
+              <p className="text-3xl font-bold text-white font-mono tracking-tight">
                 {(stats?.totalGenerations ?? 0) + (stats?.totalRenders ?? 0)}
               </p>
-              <div className="flex items-center gap-1.5 mt-1 text-[11px] text-purple-200/70">
+              <div className="flex items-center gap-1.5 mt-1.5 text-[11px] text-[#8E8E93]">
                 <span>{stats?.totalGenerations ?? 0} Steps • {stats?.totalRenders ?? 0} Renders</span>
               </div>
             </div>
           </div>
         </div>
 
-        {/* Tab Switcher Navigation - Luxury Glossy Pill Bar */}
-        <div className="flex items-center gap-2 p-1.5 bg-[#14151C]/90 backdrop-blur-xl rounded-2xl border border-white/10 shadow-lg overflow-x-auto [scrollbar-width:none]">
+        {/* Tab Switcher Navigation - Sleek Dark Pill Bar matching Frontend */}
+        <div className="flex items-center gap-1.5 p-1 bg-[#141416] rounded-2xl border border-[#28282C] overflow-x-auto [scrollbar-width:none]">
           <button
             type="button"
             onClick={() => setActiveTab("overview")}
-            className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-semibold transition-all cursor-pointer whitespace-nowrap ${activeTab === "overview" || activeTab === "activities"
-              ? "bg-gradient-to-r from-amber-400 to-amber-500 text-black font-bold shadow-md shadow-amber-400/20"
-              : "text-[#9A9AA2] hover:text-white hover:bg-white/[0.05]"
+            className={`flex items-center gap-2 px-3.5 py-1.5 rounded-xl text-xs transition-all cursor-pointer whitespace-nowrap ${activeTab === "overview" || activeTab === "activities"
+              ? "bg-[#222226] text-white border border-[#3A3A42] font-semibold shadow-sm"
+              : "text-[#8E8E93] hover:text-white hover:bg-[#1A1A1E] border border-transparent font-medium"
               }`}
           >
             <Activity size={14} />
             <span>Live Activities</span>
-            <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-mono ${activeTab === "overview" || activeTab === "activities" ? "bg-black/20 text-black" : "bg-white/10 text-neutral-300"}`}>
+            <span
+              className={`text-[10px] px-1.5 py-0.2 rounded-full font-mono ${activeTab === "overview" || activeTab === "activities"
+                ? "bg-[#18181B] text-[#D4D4D8] border border-[#33333A]"
+                : "bg-[#1A1A1E] text-[#8E8E93] border border-[#28282C]"
+                }`}
+            >
               {activities.length}
             </span>
           </button>
@@ -538,26 +562,31 @@ export default function AdminPage() {
           <button
             type="button"
             onClick={() => setActiveTab("settings")}
-            className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-semibold transition-all cursor-pointer whitespace-nowrap ${activeTab === "settings"
-              ? "bg-gradient-to-r from-amber-400 to-amber-500 text-black font-bold shadow-md shadow-amber-400/20"
-              : "text-[#9A9AA2] hover:text-white hover:bg-white/[0.05]"
+            className={`flex items-center gap-2 px-3.5 py-1.5 rounded-xl text-xs transition-all cursor-pointer whitespace-nowrap ${activeTab === "settings"
+              ? "bg-[#222226] text-white border border-[#3A3A42] font-semibold shadow-sm"
+              : "text-[#8E8E93] hover:text-white hover:bg-[#1A1A1E] border border-transparent font-medium"
               }`}
           >
-            <Coins size={14} />
+            <Sliders size={14} />
             <span>Credit Rates & Rules</span>
           </button>
 
           <button
             type="button"
             onClick={() => setActiveTab("users")}
-            className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-semibold transition-all cursor-pointer whitespace-nowrap ${activeTab === "users"
-              ? "bg-gradient-to-r from-amber-400 to-amber-500 text-black font-bold shadow-md shadow-amber-400/20"
-              : "text-[#9A9AA2] hover:text-white hover:bg-white/[0.05]"
+            className={`flex items-center gap-2 px-3.5 py-1.5 rounded-xl text-xs transition-all cursor-pointer whitespace-nowrap ${activeTab === "users"
+              ? "bg-[#222226] text-white border border-[#3A3A42] font-semibold shadow-sm"
+              : "text-[#8E8E93] hover:text-white hover:bg-[#1A1A1E] border border-transparent font-medium"
               }`}
           >
             <Users size={14} />
             <span>VIP Users</span>
-            <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-mono ${activeTab === "users" ? "bg-black/20 text-black" : "bg-white/10 text-neutral-300"}`}>
+            <span
+              className={`text-[10px] px-1.5 py-0.2 rounded-full font-mono ${activeTab === "users"
+                ? "bg-[#18181B] text-[#D4D4D8] border border-[#33333A]"
+                : "bg-[#1A1A1E] text-[#8E8E93] border border-[#28282C]"
+                }`}
+            >
               {filteredUsers.length}
             </span>
           </button>
@@ -565,43 +594,66 @@ export default function AdminPage() {
           <button
             type="button"
             onClick={() => setActiveTab("renders")}
-            className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-semibold transition-all cursor-pointer whitespace-nowrap ${activeTab === "renders"
-              ? "bg-gradient-to-r from-amber-400 to-amber-500 text-black font-bold shadow-md shadow-amber-400/20"
-              : "text-[#9A9AA2] hover:text-white hover:bg-white/[0.05]"
+            className={`flex items-center gap-2 px-3.5 py-1.5 rounded-xl text-xs transition-all cursor-pointer whitespace-nowrap ${activeTab === "renders"
+              ? "bg-[#222226] text-white border border-[#3A3A42] font-semibold shadow-sm"
+              : "text-[#8E8E93] hover:text-white hover:bg-[#1A1A1E] border border-transparent font-medium"
               }`}
           >
-            <Video size={14} />
+            <Film size={14} />
             <span>AWS Renders</span>
-            <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-mono ${activeTab === "renders" ? "bg-black/20 text-black" : "bg-white/10 text-neutral-300"}`}>
+            <span
+              className={`text-[10px] px-1.5 py-0.2 rounded-full font-mono ${activeTab === "renders"
+                ? "bg-[#18181B] text-[#D4D4D8] border border-[#33333A]"
+                : "bg-[#1A1A1E] text-[#8E8E93] border border-[#28282C]"
+                }`}
+            >
               {renderActivities.length}
             </span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              setActiveTab("shiteru");
+              if (!shiteruData && !shiteruLoading) {
+                checkShiteruQuota();
+              }
+            }}
+            className={`flex items-center gap-2 px-3.5 py-1.5 rounded-xl text-xs transition-all cursor-pointer whitespace-nowrap ${activeTab === "shiteru"
+              ? "bg-[#222226] text-white border border-[#3A3A42] font-semibold shadow-sm"
+              : "text-[#8E8E93] hover:text-white hover:bg-[#1A1A1E] border border-transparent font-medium"
+              }`}
+          >
+            <Cpu size={14} />
+            <span>Shiteru AI & Quota</span>
+            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
           </button>
         </div>
 
         {/* ── TAB 1: LIVE ACTIVITY MONITOR ────────────────────────────────────── */}
         {(activeTab === "overview" || activeTab === "activities") && (
-          <div className="bg-[#18181B] border border-[#28282C] rounded-2xl p-5 shadow-xl space-y-4">
+          <div className="bg-[#141416] border border-[#28282C] rounded-2xl p-5 shadow-sm space-y-4">
             <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 pb-3 border-b border-[#28282C]">
               <div>
                 <h3 className="text-sm font-bold text-white flex items-center gap-2">
-                  <Activity size={16} className="text-emerald-400" />
+                  <Activity size={16} className="text-[#A1A1AA]" />
                   Live Activity Stream
                 </h3>
               </div>
 
               <div className="flex items-center gap-2 w-full sm:w-auto">
                 {/* Search */}
-                <div className="relative flex-1 sm:w-56">
+                <div className="relative flex-1 sm:w-60">
                   <Search
                     size={14}
-                    className="absolute left-3 top-1/2 -translate-y-1/2 text-[#6E6E76]"
+                    className="absolute left-3 top-1/2 -translate-y-1/2 text-[#71717A]"
                   />
                   <input
                     type="text"
                     value={activitySearch}
                     onChange={(e) => setActivitySearch(e.target.value)}
                     placeholder="Search by user email or prompt…"
-                    className="w-full bg-[#1F1F23] border border-[#28282C] rounded-xl pl-8 pr-3 py-1.5 text-xs text-white placeholder:text-[#6E6E76] focus:outline-none focus:border-amber-400 transition-colors"
+                    className="w-full bg-[#0E0E11] border border-[#28282C] rounded-xl pl-8 pr-3 py-1.5 text-xs text-white placeholder:text-[#71717A] focus:outline-none focus:border-[#4A4A52] transition-colors"
                   />
                 </div>
 
@@ -609,7 +661,7 @@ export default function AdminPage() {
                 <select
                   value={activityFilter}
                   onChange={(e) => setActivityFilter(e.target.value)}
-                  className="bg-[#1F1F23] border border-[#28282C] rounded-xl px-2.5 py-1.5 text-xs text-[#F5F5F7] focus:outline-none cursor-pointer"
+                  className="bg-[#0E0E11] border border-[#28282C] rounded-xl px-2.5 py-1.5 text-xs text-[#F5F5F7] focus:outline-none cursor-pointer"
                 >
                   <option value="all">All Actions</option>
                   <option value="initial_generation">Step 1 Generation</option>
@@ -623,7 +675,7 @@ export default function AdminPage() {
             <div className="overflow-x-auto">
               <table className="w-full text-left text-xs">
                 <thead>
-                  <tr className="border-b border-[#28282C] text-[#9A9AA2] uppercase tracking-wider font-mono text-[10px]">
+                  <tr className="border-b border-[#28282C] text-[#8E8E93] uppercase tracking-wider font-mono text-[10px]">
                     <th className="py-2.5 px-3">Time</th>
                     <th className="py-2.5 px-3">User</th>
                     <th className="py-2.5 px-3">Action Type</th>
@@ -636,7 +688,7 @@ export default function AdminPage() {
                 <tbody className="divide-y divide-[#28282C]/60">
                   {filteredActivities.length === 0 ? (
                     <tr>
-                      <td colSpan={7} className="py-8 text-center text-[#6E6E76]">
+                      <td colSpan={7} className="py-8 text-center text-[#71717A]">
                         No user activity recorded yet. As users generate animations, their usage will stream here instantly.
                       </td>
                     </tr>
@@ -656,11 +708,11 @@ export default function AdminPage() {
                       return (
                         <tr
                           key={act.id}
-                          className="hover:bg-[#1F1F23]/50 transition-colors"
+                          className="hover:bg-[#1A1A1E]/60 transition-colors"
                         >
-                          <td className="py-2.5 px-3 text-[#9A9AA2] whitespace-nowrap font-mono text-[11px]">
+                          <td className="py-2.5 px-3 text-[#8E8E93] whitespace-nowrap font-mono text-[11px]">
                             <span>{timeStr}</span>
-                            <span className="text-[10px] text-[#6E6E76] block">
+                            <span className="text-[10px] text-[#71717A] block">
                               {dateStr}
                             </span>
                           </td>
@@ -676,15 +728,15 @@ export default function AdminPage() {
                                   referrerPolicy="no-referrer"
                                 />
                               ) : (
-                                <div className="w-6 h-6 rounded-full bg-blue-600/30 text-blue-400 flex items-center justify-center text-[10px] font-bold">
+                                <div className="w-6 h-6 rounded-full bg-[#1C1C20] border border-[#28282C] text-[#D4D4D8] flex items-center justify-center text-[10px] font-bold">
                                   {act.userName?.[0] || "U"}
                                 </div>
                               )}
                               <div className="min-w-0">
-                                <span className="font-semibold text-white truncate block">
+                                <span className="font-medium text-white truncate block">
                                   {act.userName || "User"}
                                 </span>
-                                <span className="text-[10px] text-[#9A9AA2] truncate block font-mono">
+                                <span className="text-[10px] text-[#8E8E93] truncate block font-mono">
                                   {act.userEmail}
                                 </span>
                               </div>
@@ -693,48 +745,46 @@ export default function AdminPage() {
 
                           <td className="py-2.5 px-3 whitespace-nowrap">
                             {act.action === "initial_generation" && (
-                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-indigo-500/10 border border-indigo-500/30 text-indigo-300 font-medium text-[11px]">
-                                <Sparkles size={11} />
+                              <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-[#1C1C20] border border-[#28282C] text-[#D4D4D8] font-medium text-[11px]">
+                                <Sparkles size={11} className="text-[#A1A1AA]" />
                                 Step 1 Gen
                               </span>
                             )}
                             {act.action === "chatbot_llm" && (
-                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-cyan-500/10 border border-cyan-500/30 text-cyan-300 font-medium text-[11px]">
-                                <MessageSquare size={11} />
+                              <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-[#1C1C20] border border-[#28282C] text-[#D4D4D8] font-medium text-[11px]">
+                                <MessageSquare size={11} className="text-[#A1A1AA]" />
                                 Chatbot Edit
                               </span>
                             )}
                             {act.action === "aws_render" && (
-                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-rose-500/10 border border-rose-500/30 text-rose-300 font-medium text-[11px]">
-                                <Video size={11} />
+                              <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-[#1C1C20] border border-[#28282C] text-[#D4D4D8] font-medium text-[11px]">
+                                <Film size={11} className="text-[#A1A1AA]" />
                                 AWS Render
                               </span>
                             )}
                           </td>
 
-                          <td className="py-2.5 px-3 font-mono font-bold whitespace-nowrap">
-                            <span className="text-amber-400">
-                              -{act.credits}
-                            </span>
+                          <td className="py-2.5 px-3 font-mono font-semibold whitespace-nowrap text-white">
+                            <span>-{act.credits}</span>
                           </td>
 
-                          <td className="py-2.5 px-3 max-w-xs truncate text-[#E0E0E6]" title={act.description}>
+                          <td className="py-2.5 px-3 max-w-xs truncate text-[#D4D4D8]" title={act.description}>
                             {act.description}
                           </td>
 
-                          <td className="py-2.5 px-3 font-mono text-[#9A9AA2] whitespace-nowrap">
+                          <td className="py-2.5 px-3 font-mono text-[#8E8E93] whitespace-nowrap">
                             {act.remainingQuota.toFixed(1)} Credits
                           </td>
 
                           <td className="py-2.5 px-3 whitespace-nowrap">
                             {act.status === "success" ? (
-                              <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-full border border-emerald-500/25">
-                                <CheckCircle2 size={10} />
+                              <span className="inline-flex items-center gap-1.5 text-[11px] font-mono text-[#D4D4D8]">
+                                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
                                 Deducted
                               </span>
                             ) : (
-                              <span className="inline-flex items-center gap-1 text-[10px] font-bold text-rose-400 bg-rose-500/10 px-2 py-0.5 rounded-full border border-rose-500/25">
-                                <AlertTriangle size={10} />
+                              <span className="inline-flex items-center gap-1.5 text-[11px] font-mono text-rose-400">
+                                <span className="w-1.5 h-1.5 rounded-full bg-rose-400" />
                                 Insufficient
                               </span>
                             )}
@@ -749,47 +799,44 @@ export default function AdminPage() {
           </div>
         )}
 
-        {/* ── TAB 2: CREDIT RATES & PRICING CONFIGURATION ──────────────────────── */}
+        {/* ── TAB 2: DYNAMIC CREDIT PRICING & LOGGING RULES ────────────────────── */}
         {activeTab === "settings" && (
-          <div className="bg-[#13141C]/90 backdrop-blur-xl border border-white/10 rounded-2xl p-6 sm:p-7 shadow-2xl space-y-7 relative overflow-hidden">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-white/10">
+          <div className="bg-[#141416] border border-[#28282C] rounded-2xl p-5 shadow-sm space-y-6">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-[#28282C]">
               <div>
-                <h3 className="text-base font-bold text-white flex items-center gap-2.5">
-                  <Coins size={18} className="text-amber-400" />
-                  Credit Pricing Settings & Dynamic Rules
+                <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                  <Sliders size={16} className="text-[#A1A1AA]" />
+                  Dynamic Credit Pricing Settings
                 </h3>
-                <p className="text-xs text-[#9A9AA2] mt-0.5">
-                  Configure real-time deduction rates for AI generations, edits, and cloud rendering.
+                <p className="text-xs text-[#8E8E93] mt-0.5">
+                  Adjust credit consumption across all Motion Studio features. Changes apply instantly in real-time.
                 </p>
               </div>
-              <span className="text-[11px] font-mono font-medium px-2.5 py-1 rounded-lg bg-amber-400/10 border border-amber-400/25 text-amber-300 w-fit">
-                Live Engine Active
-              </span>
+
+              {saveSuccessMessage && (
+                <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-[#1C1C20] border border-[#28282C] text-emerald-400 text-xs font-mono font-medium animate-fade-in">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+                  <span>{saveSuccessMessage}</span>
+                </div>
+              )}
             </div>
 
-            {saveSuccessMessage && (
-              <div className="p-3.5 rounded-xl bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 text-xs font-semibold flex items-center gap-2.5 animate-in fade-in">
-                <Check size={16} className="text-emerald-400 shrink-0" />
-                <span>{saveSuccessMessage}</span>
-              </div>
-            )}
-
-            <form onSubmit={handleSaveSettings} className="space-y-7">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-                {/* 1. Initial Generation Cost (Dynamic 2 Credits per 10s) */}
-                <div className="relative group rounded-2xl p-5 bg-gradient-to-br from-[#1E1910]/80 via-[#16130D]/80 to-[#110F0A]/80 border border-amber-500/30 shadow-lg hover:border-amber-400/50 transition-all space-y-3">
+            <form onSubmit={handleSaveSettings} className="space-y-6">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {/* 1. Initial Prompt Generation Cost */}
+                <div className="rounded-2xl p-5 bg-[#141417] border border-[#28282C] hover:border-[#38383E] transition-all space-y-3">
                   <div className="flex items-center justify-between">
                     <label className="text-xs font-bold text-white flex items-center gap-2">
-                      <Sparkles size={15} className="text-amber-400" />
-                      Step 1 Motion Generation Rate
+                      <Sparkles size={15} className="text-[#A1A1AA]" />
+                      Initial Animation Generation
                     </label>
-                    <span className="text-[10px] font-mono px-2 py-0.5 rounded-md bg-amber-400/15 text-amber-300 font-bold border border-amber-400/30">
-                      Dynamic Duration
+                    <span className="text-[10px] font-mono px-2 py-0.5 rounded-md bg-[#1C1C20] text-[#D4D4D8] font-medium border border-[#28282C]">
+                      Step 1 Prompt
                     </span>
                   </div>
 
-                  <p className="text-[11px] text-[#9A9AA2] leading-relaxed">
-                    Set the base rate per 10 seconds. Longer videos scale proportionally:
+                  <p className="text-[11px] text-[#8E8E93] leading-relaxed">
+                    Base credit cost charged per 10 seconds of generated kinetic typography or motion graphics.
                   </p>
 
                   <div className="flex items-center gap-2.5 pt-1">
@@ -800,17 +847,17 @@ export default function AdminPage() {
                         min="0"
                         value={formInitialGenCost}
                         onChange={(e) => setFormInitialGenCost(e.target.value)}
-                        className="w-full bg-[#0A0A0E] border border-white/10 rounded-xl px-3.5 py-2.5 text-sm font-mono text-white focus:outline-none focus:border-amber-400 focus:ring-1 focus:ring-amber-400/30"
+                        className="w-full bg-[#0E0E11] border border-[#28282C] rounded-xl px-3.5 py-2.5 text-sm font-mono text-white focus:outline-none focus:border-[#4A4A52] transition-colors"
                       />
                     </div>
-                    <span className="text-xs text-amber-300 font-bold font-mono px-2.5 py-2 rounded-xl bg-amber-500/10 border border-amber-500/20 shrink-0">
+                    <span className="text-xs text-[#D4D4D8] font-mono px-2.5 py-2 rounded-xl bg-[#1C1C20] border border-[#28282C] shrink-0">
                       Credits / 10s
                     </span>
                   </div>
 
                   {/* Live Duration Breakdown Pill Chips */}
-                  <div className="pt-2 border-t border-white/5 space-y-1.5">
-                    <span className="text-[10px] text-[#6E6E76] uppercase tracking-wider font-semibold block">
+                  <div className="pt-2 border-t border-[#28282C] space-y-1.5">
+                    <span className="text-[10px] text-[#71717A] uppercase tracking-wider font-semibold block">
                       Live Duration Breakdown ({formInitialGenCost || "2"} Cr / 10s):
                     </span>
                     <div className="flex flex-wrap gap-1.5">
@@ -826,10 +873,10 @@ export default function AdminPage() {
                         return (
                           <span
                             key={item.label}
-                            className="text-[10px] font-mono px-2 py-0.5 rounded bg-black/40 border border-white/10 text-neutral-300 flex items-center gap-1"
+                            className="text-[10px] font-mono px-2 py-0.5 rounded bg-[#0E0E11] border border-[#28282C] text-[#D4D4D8] flex items-center gap-1"
                           >
-                            <span className="text-[#9A9AA2]">{item.label}:</span>
-                            <span className="font-bold text-amber-300">{total} Cr</span>
+                            <span className="text-[#8E8E93]">{item.label}:</span>
+                            <span className="font-bold text-white">{total} Cr</span>
                           </span>
                         );
                       })}
@@ -838,18 +885,18 @@ export default function AdminPage() {
                 </div>
 
                 {/* 2. Chatbot Assistant Message Cost */}
-                <div className="relative group rounded-2xl p-5 bg-gradient-to-br from-[#101924]/80 via-[#0D141C]/80 to-[#0A0F15]/80 border border-cyan-500/30 shadow-lg hover:border-cyan-400/50 transition-all space-y-3">
+                <div className="rounded-2xl p-5 bg-[#141417] border border-[#28282C] hover:border-[#38383E] transition-all space-y-3">
                   <div className="flex items-center justify-between">
                     <label className="text-xs font-bold text-white flex items-center gap-2">
-                      <MessageSquare size={15} className="text-cyan-400" />
+                      <MessageSquare size={15} className="text-[#A1A1AA]" />
                       Chatbot AI LLM Revision
                     </label>
-                    <span className="text-[10px] font-mono px-2 py-0.5 rounded-md bg-cyan-400/15 text-cyan-300 font-bold border border-cyan-400/30">
+                    <span className="text-[10px] font-mono px-2 py-0.5 rounded-md bg-[#1C1C20] text-[#D4D4D8] font-medium border border-[#28282C]">
                       Per Prompt Edit
                     </span>
                   </div>
 
-                  <p className="text-[11px] text-[#9A9AA2] leading-relaxed">
+                  <p className="text-[11px] text-[#8E8E93] leading-relaxed">
                     Credit cost for each conversational iteration or self-healing fix with AI.
                   </p>
 
@@ -861,34 +908,34 @@ export default function AdminPage() {
                         min="0"
                         value={formChatbotCost}
                         onChange={(e) => setFormChatbotCost(e.target.value)}
-                        className="w-full bg-[#0A0A0E] border border-white/10 rounded-xl px-3.5 py-2.5 text-sm font-mono text-white focus:outline-none focus:border-cyan-400 focus:ring-1 focus:ring-cyan-400/30"
+                        className="w-full bg-[#0E0E11] border border-[#28282C] rounded-xl px-3.5 py-2.5 text-sm font-mono text-white focus:outline-none focus:border-[#4A4A52] transition-colors"
                       />
                     </div>
-                    <span className="text-xs text-cyan-300 font-bold font-mono px-2.5 py-2 rounded-xl bg-cyan-500/10 border border-cyan-500/20 shrink-0">
+                    <span className="text-xs text-[#D4D4D8] font-mono px-2.5 py-2 rounded-xl bg-[#1C1C20] border border-[#28282C] shrink-0">
                       Credits / Msg
                     </span>
                   </div>
 
-                  <div className="pt-2 border-t border-white/5">
-                    <span className="text-[11px] text-[#6E6E76]">
+                  <div className="pt-2 border-t border-[#28282C]">
+                    <span className="text-[11px] text-[#71717A]">
                       Standard follow-up rate: 1 credit per revision query.
                     </span>
                   </div>
                 </div>
 
                 {/* 3. AWS Video Render Cost */}
-                <div className="relative group rounded-2xl p-5 bg-gradient-to-br from-[#24101A]/80 via-[#1C0D15]/80 to-[#140A0F]/80 border border-rose-500/30 shadow-lg hover:border-rose-400/50 transition-all space-y-3">
+                <div className="rounded-2xl p-5 bg-[#141417] border border-[#28282C] hover:border-[#38383E] transition-all space-y-3">
                   <div className="flex items-center justify-between">
                     <label className="text-xs font-bold text-white flex items-center gap-2">
-                      <Video size={15} className="text-rose-400" />
+                      <Film size={15} className="text-[#A1A1AA]" />
                       AWS Video Lambda Render
                     </label>
-                    <span className="text-[10px] font-mono px-2 py-0.5 rounded-md bg-rose-400/15 text-rose-300 font-bold border border-rose-400/30">
+                    <span className="text-[10px] font-mono px-2 py-0.5 rounded-md bg-[#1C1C20] text-[#D4D4D8] font-medium border border-[#28282C]">
                       Full MP4 Export
                     </span>
                   </div>
 
-                  <p className="text-[11px] text-[#9A9AA2] leading-relaxed">
+                  <p className="text-[11px] text-[#8E8E93] leading-relaxed">
                     Cost to render Remotion animation to high-definition MP4 on AWS cloud.
                   </p>
 
@@ -900,34 +947,34 @@ export default function AdminPage() {
                         min="0"
                         value={formRenderCost}
                         onChange={(e) => setFormRenderCost(e.target.value)}
-                        className="w-full bg-[#0A0A0E] border border-white/10 rounded-xl px-3.5 py-2.5 text-sm font-mono text-white focus:outline-none focus:border-rose-400 focus:ring-1 focus:ring-rose-400/30"
+                        className="w-full bg-[#0E0E11] border border-[#28282C] rounded-xl px-3.5 py-2.5 text-sm font-mono text-white focus:outline-none focus:border-[#4A4A52] transition-colors"
                       />
                     </div>
-                    <span className="text-xs text-rose-300 font-bold font-mono px-2.5 py-2 rounded-xl bg-rose-500/10 border border-rose-500/20 shrink-0">
+                    <span className="text-xs text-[#D4D4D8] font-mono px-2.5 py-2 rounded-xl bg-[#1C1C20] border border-[#28282C] shrink-0">
                       Credits / Render
                     </span>
                   </div>
 
-                  <div className="pt-2 border-t border-white/5">
-                    <span className="text-[11px] text-[#6E6E76]">
+                  <div className="pt-2 border-t border-[#28282C]">
+                    <span className="text-[11px] text-[#71717A]">
                       Includes S3 storage, parallel worker rendering, and download links.
                     </span>
                   </div>
                 </div>
 
                 {/* 4. Service Developer Fee Percent */}
-                <div className="relative group rounded-2xl p-5 bg-gradient-to-br from-[#10241A]/80 via-[#0D1C15]/80 to-[#0A140F]/80 border border-emerald-500/30 shadow-lg hover:border-emerald-400/50 transition-all space-y-3">
+                <div className="rounded-2xl p-5 bg-[#141417] border border-[#28282C] hover:border-[#38383E] transition-all space-y-3">
                   <div className="flex items-center justify-between">
                     <label className="text-xs font-bold text-white flex items-center gap-2">
-                      <Zap size={15} className="text-emerald-400" />
+                      <CircleDollarSign size={15} className="text-[#A1A1AA]" />
                       Service Developer Fee (%)
                     </label>
-                    <span className="text-[10px] font-mono px-2 py-0.5 rounded-md bg-emerald-400/15 text-emerald-300 font-bold border border-emerald-400/30">
+                    <span className="text-[10px] font-mono px-2 py-0.5 rounded-md bg-[#1C1C20] text-[#D4D4D8] font-medium border border-[#28282C]">
                       Auto-Logged RM
                     </span>
                   </div>
 
-                  <p className="text-[11px] text-[#9A9AA2] leading-relaxed">
+                  <p className="text-[11px] text-[#8E8E93] leading-relaxed">
                     Percentage of charged render credits credited to Swdbot Developer Redemptions.
                   </p>
 
@@ -940,44 +987,44 @@ export default function AdminPage() {
                         max="100"
                         value={formDevFeePercent}
                         onChange={(e) => setFormDevFeePercent(e.target.value)}
-                        className="w-full bg-[#0A0A0E] border border-white/10 rounded-xl px-3.5 py-2.5 text-sm font-mono text-white focus:outline-none focus:border-emerald-400 focus:ring-1 focus:ring-emerald-400/30"
+                        className="w-full bg-[#0E0E11] border border-[#28282C] rounded-xl px-3.5 py-2.5 text-sm font-mono text-white focus:outline-none focus:border-[#4A4A52] transition-colors"
                       />
                     </div>
-                    <span className="text-xs text-emerald-300 font-bold font-mono px-2.5 py-2 rounded-xl bg-emerald-500/10 border border-emerald-500/20 shrink-0">
+                    <span className="text-xs text-[#D4D4D8] font-mono px-2.5 py-2 rounded-xl bg-[#1C1C20] border border-[#28282C] shrink-0">
                       % Revenue Share
                     </span>
                   </div>
 
-                  <div className="pt-2 border-t border-white/5">
-                    <span className="text-[11px] text-[#6E6E76]">
+                  <div className="pt-2 border-t border-[#28282C]">
+                    <span className="text-[11px] text-[#71717A]">
                       Automatically syncs with public.redemptions table in real-time.
                     </span>
                   </div>
                 </div>
               </div>
 
-              {/* Action Bar with Luxury Amber Button */}
-              <div className="pt-3 flex flex-wrap items-center justify-between gap-4 border-t border-white/10">
+              {/* Action Bar with Clean White Button */}
+              <div className="pt-3 flex flex-wrap items-center justify-between gap-4 border-t border-[#28282C]">
                 <button
                   type="submit"
                   disabled={isSavingSettings}
-                  className="px-6 py-3 rounded-xl bg-gradient-to-r from-amber-400 via-amber-300 to-yellow-400 hover:from-amber-300 hover:to-yellow-300 text-black font-bold text-xs transition-all shadow-lg shadow-amber-400/25 active:scale-[0.99] flex items-center gap-2 cursor-pointer disabled:opacity-50"
+                  className="px-6 py-2.5 rounded-xl bg-white hover:bg-neutral-200 text-black font-semibold text-xs transition-all shadow-sm flex items-center gap-2 cursor-pointer disabled:opacity-50"
                 >
                   {isSavingSettings ? (
                     <>
-                      <Loader2 size={15} className="animate-spin" />
+                      <Loader2 size={14} className="animate-spin text-black" />
                       <span>Saving New Rates…</span>
                     </>
                   ) : (
                     <>
-                      <Save size={15} />
+                      <Save size={14} />
                       <span>Save Pricing Settings</span>
                     </>
                   )}
                 </button>
-                <div className="text-[11px] text-[#6E6E76] font-mono">
+                <div className="text-[11px] text-[#71717A] font-mono">
                   Engine Timestamp:{" "}
-                  <span className="text-neutral-400">
+                  <span className="text-[#A1A1AA]">
                     {settings.updatedAt
                       ? new Date(settings.updatedAt).toLocaleString()
                       : "Default Factory Settings"}
@@ -990,11 +1037,11 @@ export default function AdminPage() {
 
         {/* ── TAB 3: VIP USER MANAGEMENT ──────────────────────────────────────── */}
         {activeTab === "users" && (
-          <div className="bg-[#18181B] border border-[#28282C] rounded-2xl p-5 shadow-xl space-y-4">
+          <div className="bg-[#141416] border border-[#28282C] rounded-2xl p-5 shadow-sm space-y-4">
             <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 pb-3 border-b border-[#28282C]">
               <div>
                 <h3 className="text-sm font-bold text-white flex items-center gap-2">
-                  <Users size={16} className="text-blue-400" />
+                  <Users size={16} className="text-[#A1A1AA]" />
                   VIP Members ({filteredUsers.length})
                 </h3>
               </div>
@@ -1002,14 +1049,14 @@ export default function AdminPage() {
               <div className="relative w-full sm:w-64">
                 <Search
                   size={14}
-                  className="absolute left-3 top-1/2 -translate-y-1/2 text-[#6E6E76]"
+                  className="absolute left-3 top-1/2 -translate-y-1/2 text-[#71717A]"
                 />
                 <input
                   type="text"
                   value={userSearch}
                   onChange={(e) => setUserSearch(e.target.value)}
                   placeholder="Filter users by name or email…"
-                  className="w-full bg-[#1F1F23] border border-[#28282C] rounded-xl pl-8 pr-3 py-1.5 text-xs text-white placeholder:text-[#6E6E76] focus:outline-none focus:border-amber-400"
+                  className="w-full bg-[#0E0E11] border border-[#28282C] rounded-xl pl-8 pr-3 py-1.5 text-xs text-white placeholder:text-[#71717A] focus:outline-none focus:border-[#4A4A52] transition-colors"
                 />
               </div>
             </div>
@@ -1017,7 +1064,7 @@ export default function AdminPage() {
             <div className="overflow-x-auto">
               <table className="w-full text-left text-xs">
                 <thead>
-                  <tr className="border-b border-[#28282C] text-[#9A9AA2] uppercase tracking-wider font-mono text-[10px]">
+                  <tr className="border-b border-[#28282C] text-[#8E8E93] uppercase tracking-wider font-mono text-[10px]">
                     <th className="py-2.5 px-3">User</th>
                     <th className="py-2.5 px-3">Credits</th>
                     <th className="py-2.5 px-3">Status</th>
@@ -1027,7 +1074,7 @@ export default function AdminPage() {
                 <tbody className="divide-y divide-[#28282C]/60">
                   {filteredUsers.length === 0 ? (
                     <tr>
-                      <td colSpan={6} className="py-8 text-center text-[#6E6E76]">
+                      <td colSpan={4} className="py-8 text-center text-[#71717A]">
                         No matching users found.
                       </td>
                     </tr>
@@ -1040,7 +1087,7 @@ export default function AdminPage() {
                       return (
                         <tr
                           key={u.id || u.email}
-                          className="hover:bg-[#1F1F23]/50 transition-colors"
+                          className="hover:bg-[#1A1A1E]/60 transition-colors"
                         >
                           <td className="py-2.5 px-3">
                             <div className="flex items-center gap-2.5">
@@ -1053,22 +1100,22 @@ export default function AdminPage() {
                                   referrerPolicy="no-referrer"
                                 />
                               ) : (
-                                <div className="w-7 h-7 rounded-full bg-blue-600/30 text-blue-400 flex items-center justify-center font-bold text-xs">
+                                <div className="w-7 h-7 rounded-full bg-[#1C1C20] border border-[#28282C] text-[#D4D4D8] flex items-center justify-center font-bold text-xs">
                                   {u.name?.[0] || u.email[0].toUpperCase()}
                                 </div>
                               )}
                               <div>
                                 <div className="flex items-center gap-1.5">
-                                  <span className="font-semibold text-white">
+                                  <span className="font-medium text-white">
                                     {u.name || "User"}
                                   </span>
                                   {isUserAdmin && (
-                                    <span className="px-1.5 py-0.2 rounded text-[9px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30 font-mono">
+                                    <span className="px-1.5 py-0.2 rounded text-[9px] font-medium bg-[#1C1C20] text-[#D4D4D8] border border-[#28282C] font-mono">
                                       ADMIN
                                     </span>
                                   )}
                                 </div>
-                                <span className="text-[11px] text-[#9A9AA2] font-mono">
+                                <span className="text-[11px] text-[#8E8E93] font-mono">
                                   {u.email}
                                 </span>
                               </div>
@@ -1090,22 +1137,22 @@ export default function AdminPage() {
                                   }
                                 }
                               }}
-                              className="inline-flex items-center gap-1 hover:bg-[#1F1F23] px-1.5 py-0.5 rounded cursor-pointer transition-colors"
+                              className="inline-flex items-center gap-1 hover:bg-[#1F1F23] px-2 py-1 rounded cursor-pointer transition-colors"
                               title="Click to adjust quota"
                             >
-                              <span className="font-mono font-bold text-amber-400 text-sm">
+                              <span className="font-mono font-bold text-white text-sm">
                                 {(Number(u.quota) || 0).toFixed(1)}
                               </span>
-                              <span className="text-[10px] text-[#6E6E76]">
+                              <span className="text-[10px] text-[#71717A]">
                                 Credits
                               </span>
                             </button>
                           </td>
 
                           <td className="py-2.5 px-3 whitespace-nowrap">
-                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/10 border border-amber-500/30 text-amber-300">
-                              <Crown size={10} />
-                              VIP
+                            <span className="inline-flex items-center gap-1.5 text-[11px] font-mono text-[#D4D4D8]">
+                              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+                              Active VIP
                             </span>
                           </td>
 
@@ -1116,9 +1163,9 @@ export default function AdminPage() {
                                 onClick={() =>
                                   handleToggleBlock(u.email, u.is_blocked)
                                 }
-                                className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold transition-colors cursor-pointer ${u.is_blocked
-                                  ? "bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/30"
-                                  : "bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/30"
+                                className={`px-2.5 py-1 rounded-lg text-xs font-medium transition-colors cursor-pointer ${u.is_blocked
+                                  ? "bg-[#1C1C20] text-[#D4D4D8] border border-[#28282C] hover:bg-[#24242A]"
+                                  : "bg-rose-500/10 text-rose-300 border border-rose-500/20 hover:bg-rose-500/20"
                                   }`}
                               >
                                 {u.is_blocked ? "Unblock" : "Block User"}
@@ -1137,36 +1184,36 @@ export default function AdminPage() {
 
         {/* ── TAB 4: AWS RENDERS & DEVELOPER COMMISSION BREAKDOWN ─────────────── */}
         {activeTab === "renders" && (
-          <div className="bg-[#18181B] border border-[#28282C] rounded-2xl p-5 shadow-xl space-y-4">
+          <div className="bg-[#141416] border border-[#28282C] rounded-2xl p-5 shadow-sm space-y-4">
             <div className="pb-3 border-b border-[#28282C]">
               <h3 className="text-sm font-bold text-white flex items-center gap-2">
-                <Video size={16} className="text-rose-400" />
+                <Film size={16} className="text-[#A1A1AA]" />
                 AWS Video Renders
               </h3>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 p-4 rounded-xl bg-[#1F1F23] border border-[#28282C]">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 p-4 rounded-xl bg-[#0E0E11] border border-[#28282C]">
               <div>
-                <span className="text-[11px] text-[#9A9AA2] block">
-                  Total AWS Lambda Renders
+                <span className="text-[11px] text-[#8E8E93] block font-mono">
+                  TOTAL AWS LAMBDA RENDERS
                 </span>
-                <span className="text-xl font-black text-white font-mono">
+                <span className="text-xl font-bold text-white font-mono">
                   {renderActivities.length} Jobs
                 </span>
               </div>
               <div>
-                <span className="text-[11px] text-[#9A9AA2] block">
-                  Gross Credits Deducted
+                <span className="text-[11px] text-[#8E8E93] block font-mono">
+                  GROSS CREDITS DEDUCTED
                 </span>
-                <span className="text-xl font-black text-rose-400 font-mono">
+                <span className="text-xl font-bold text-white font-mono">
                   {renderActivities.length * settings.renderCost} Credits
                 </span>
               </div>
               <div>
-                <span className="text-[11px] text-amber-300 block font-semibold">
-                  Total 50% Developer Fee Logged
+                <span className="text-[11px] text-[#8E8E93] block font-mono">
+                  50% DEVELOPER FEE LOGGED
                 </span>
-                <span className="text-xl font-black text-amber-400 font-mono">
+                <span className="text-xl font-bold text-white font-mono">
                   RM{" "}
                   {(
                     renderActivities.length *
@@ -1180,7 +1227,7 @@ export default function AdminPage() {
             <div className="overflow-x-auto">
               <table className="w-full text-left text-xs">
                 <thead>
-                  <tr className="border-b border-[#28282C] text-[#9A9AA2] uppercase tracking-wider font-mono text-[10px]">
+                  <tr className="border-b border-[#28282C] text-[#8E8E93] uppercase tracking-wider font-mono text-[10px]">
                     <th className="py-2.5 px-3">Render Time</th>
                     <th className="py-2.5 px-3">User</th>
                     <th className="py-2.5 px-3">Gross Deduction</th>
@@ -1192,7 +1239,7 @@ export default function AdminPage() {
                 <tbody className="divide-y divide-[#28282C]/60">
                   {renderActivities.length === 0 ? (
                     <tr>
-                      <td colSpan={6} className="py-8 text-center text-[#6E6E76]">
+                      <td colSpan={6} className="py-8 text-center text-[#71717A]">
                         No AWS video render jobs recorded yet.
                       </td>
                     </tr>
@@ -1200,26 +1247,26 @@ export default function AdminPage() {
                     renderActivities.map((rnd) => (
                       <tr
                         key={rnd.id}
-                        className="hover:bg-[#1F1F23]/50 transition-colors"
+                        className="hover:bg-[#1A1A1E]/60 transition-colors"
                       >
-                        <td className="py-2.5 px-3 font-mono text-[11px] text-[#9A9AA2]">
+                        <td className="py-2.5 px-3 font-mono text-[11px] text-[#8E8E93]">
                           {new Date(rnd.timestamp).toLocaleString()}
                         </td>
-                        <td className="py-2.5 px-3 font-semibold text-white">
+                        <td className="py-2.5 px-3 font-medium text-white">
                           {rnd.userEmail}
                         </td>
-                        <td className="py-2.5 px-3 font-mono text-rose-400 font-bold">
+                        <td className="py-2.5 px-3 font-mono text-white font-bold">
                           -{rnd.credits} Credits
                         </td>
-                        <td className="py-2.5 px-3 font-mono text-amber-400 font-bold">
+                        <td className="py-2.5 px-3 font-mono text-white font-medium">
                           RM {(rnd.credits * 0.5).toFixed(2)}
                         </td>
-                        <td className="py-2.5 px-3 font-mono text-[11px] text-[#9A9AA2]">
+                        <td className="py-2.5 px-3 font-mono text-[11px] text-[#8E8E93]">
                           Storyboard Video Render (AWS)
                         </td>
                         <td className="py-2.5 px-3">
-                          <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-full border border-emerald-500/25">
-                            <CheckCircle2 size={10} />
+                          <span className="inline-flex items-center gap-1.5 text-[11px] font-mono text-[#D4D4D8]">
+                            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
                             Completed
                           </span>
                         </td>
@@ -1228,6 +1275,177 @@ export default function AdminPage() {
                   )}
                 </tbody>
               </table>
+            </div>
+          </div>
+        )}
+
+        {/* ── TAB 5: SHITERU AI ENGINE & LIVE QUOTA ───────────────────────────── */}
+        {activeTab === "shiteru" && (
+          <div className="space-y-6">
+            {/* Header Card */}
+            <div className="rounded-2xl p-6 bg-[#141416] border border-[#28282C] shadow-sm">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                <div className="space-y-1">
+                  <div className="flex items-center gap-2.5">
+                    <h3 className="text-base sm:text-lg font-bold text-white flex items-center gap-2">
+                      <Cpu size={18} className="text-[#A1A1AA]" />
+                      Shiteru ID - Provider
+                    </h3>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2.5 shrink-0">
+                  <button
+                    type="button"
+                    onClick={checkShiteruQuota}
+                    disabled={shiteruLoading}
+                    className="flex items-center gap-2 px-4 py-2 rounded-xl bg-white hover:bg-neutral-200 text-black text-xs font-semibold transition-all shadow-sm cursor-pointer disabled:opacity-50"
+                  >
+                    <RefreshCw size={13} className={shiteruLoading ? "animate-spin text-black" : ""} />
+                    <span>{shiteruLoading ? "Refreshing..." : "Refresh"}</span>
+                  </button>
+                  <a
+                    href="https://shiteru.id"
+                    target="_blank"
+                    rel="noreferrer"
+                    className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-[#1C1C20] border border-[#28282C] text-[#A1A1AA] hover:text-white text-xs font-medium transition-colors"
+                  >
+                    <span>Dashboard</span>
+                    <ExternalLink size={13} />
+                  </a>
+                </div>
+              </div>
+
+              {/* Status grid */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5 mt-5 pt-5 border-t border-[#28282C]">
+                <div className="p-3.5 rounded-xl bg-[#0E0E11] border border-[#28282C] space-y-1">
+                  <span className="text-[10px] font-mono text-[#8E8E93] uppercase flex items-center gap-1.5">
+                    <Server size={12} className="text-[#A1A1AA]" />
+                    Gateway URL
+                  </span>
+                  <p className="text-xs font-mono text-white font-medium truncate">
+                    https://shiteru.id/v1
+                  </p>
+                </div>
+
+                <div className="p-3.5 rounded-xl bg-[#0E0E11] border border-[#28282C] space-y-1">
+                  <span className="text-[10px] font-mono text-[#8E8E93] uppercase flex items-center gap-1.5">
+                    <KeyRound size={12} className="text-[#A1A1AA]" />
+                    Active Key
+                  </span>
+                  <p className="text-xs font-mono text-[#D4D4D8] font-medium truncate">
+                    {shiteruData?.data?.key?.keyPrefix
+                      ? `${shiteruData.data.key.keyPrefix}...`
+                      : "sk_live_ROlB-F7V..."}
+                  </p>
+                </div>
+
+                <div className="p-3.5 rounded-xl bg-[#0E0E11] border border-[#28282C] space-y-1">
+                  <span className="text-[10px] font-mono text-[#8E8E93] uppercase flex items-center gap-1.5">
+                    <Cpu size={12} className="text-[#A1A1AA]" />
+                    Default Model
+                  </span>
+                  <p className="text-xs font-mono text-white font-medium">
+                    gpt-6.1-sol (Fast: gpt-6-luna)
+                  </p>
+                </div>
+
+                <div className="p-3.5 rounded-xl bg-[#0E0E11] border border-[#28282C] space-y-1">
+                  <span className="text-[10px] font-mono text-[#8E8E93] uppercase flex items-center gap-1.5">
+                    <CheckCircle2 size={12} className="text-[#A1A1AA]" />
+                    Key Status
+                  </span>
+                  <p className="text-xs font-mono text-white font-medium uppercase flex items-center gap-1.5">
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+                    {shiteruData?.data?.key?.status || "ACTIVE"}
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {/* Error banner if check failed */}
+            {shiteruError && (
+              <div className="p-4 rounded-xl bg-rose-500/10 border border-rose-500/20 text-rose-300 text-xs flex items-center gap-2">
+                <AlertTriangle size={15} className="text-rose-400 shrink-0" />
+                <span>{shiteruError}</span>
+              </div>
+            )}
+
+            {/* Active Models Catalog */}
+            <div className="bg-[#141416] border border-[#28282C] rounded-2xl p-5 shadow-sm space-y-4">
+              <div className="flex items-center justify-between pb-3 border-b border-[#28282C]">
+                <div>
+                  <h4 className="text-sm font-bold text-white flex items-center gap-2">
+                    <Cpu size={15} className="text-[#A1A1AA]" />
+                    Katalog Model
+                  </h4>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                {[
+                  {
+                    id: "gpt-6.1-sol",
+                    name: "GPT 6.1 Sol",
+                    badge: "Default",
+                    desc: "Model tercanggih Shiteru AI untuk coding React/Remotion kompleks.",
+                  },
+                  {
+                    id: "gpt-6-astra",
+                    name: "GPT 6 Astra",
+                    badge: "Frontier High",
+                    desc: "Kemampuan penalaran tinggi untuk animasi storyboard dan kinetic typography.",
+                  },
+                  {
+                    id: "gpt-6-sol",
+                    name: "GPT 6 Sol",
+                    badge: "Balanced",
+                    desc: "Keseimbangan kecepatan dan kecerdasan tinggi untuk workflow studio.",
+                  },
+                  {
+                    id: "gpt-6-luna",
+                    name: "GPT 6 Luna",
+                    badge: "Fast / Cheap",
+                    desc: "Model ultra-cepat untuk revisi chatbot instan dan validasi prompt.",
+                  },
+                  {
+                    id: "gpt-5.6-sol",
+                    name: "GPT 5.6 Sol",
+                    badge: "Stable Workhorse",
+                    desc: "Efisiensi tinggi dan stabil untuk komponen motion graphics.",
+                  },
+                  {
+                    id: "gpt-5.6-terra",
+                    name: "GPT 5.6 Terra",
+                    badge: "Structured",
+                    desc: "Optimal untuk transisi terstruktur dan layout visual responsif.",
+                  },
+                  {
+                    id: "gpt-5.6-luna",
+                    name: "GPT 5.6 Luna",
+                    badge: "Lightweight",
+                    desc: "Model hemat daya untuk pengeditan cepat.",
+                  },
+                ].map((m) => (
+                  <div
+                    key={m.id}
+                    className="p-3.5 rounded-xl bg-[#0E0E11] border border-[#28282C] hover:border-[#38383E] transition-all space-y-1.5"
+                  >
+                    <div className="flex items-center justify-between">
+                      <span className="font-mono text-xs font-bold text-white">
+                        {m.name}{" "}
+                        <span className="text-[10px] text-[#71717A]">({m.id})</span>
+                      </span>
+                      <span className="text-[10px] px-2 py-0.5 rounded-md font-mono bg-[#1C1C20] border border-[#28282C] text-[#D4D4D8]">
+                        {m.badge}
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-[#8E8E93] leading-relaxed">
+                      {m.desc}
+                    </p>
+                  </div>
+                ))}
+              </div>
             </div>
           </div>
         )}

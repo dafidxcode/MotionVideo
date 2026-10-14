@@ -7,10 +7,15 @@ import {
   getProviderOptions,
   resolveLlm,
 } from "@/lib/llm-provider";
-import { generateObject, streamText } from "ai";
+import { generateObject, generateText, streamText } from "ai";
 import { z } from "zod";
 import { verifySessionToken } from "@/lib/auth";
 import { chargeUserCredits } from "@/lib/credits";
+
+// Suppress AI SDK unsupported setting warnings for OpenAI-compatible proxies
+if (typeof globalThis !== "undefined") {
+  (globalThis as any).AI_SDK_LOG_WARNINGS = false;
+}
 
 const VALIDATION_PROMPT = `You are a prompt classifier for a motion graphics generation tool.
 
@@ -442,15 +447,22 @@ export async function POST(req: Request) {
   // Validate the prompt first (skip for follow-ups with existing code)
   if (!isFollowUp) {
     try {
-      const validationResult = await generateObject({
+      const validationResponse = await generateText({
         model: fastLlm.model,
         system: VALIDATION_PROMPT,
         prompt: `User prompt: "${prompt}"`,
-        schema: z.object({ valid: z.boolean() }),
         ...getProviderOptions(fastLlm),
       });
 
-      if (!validationResult.object.valid) {
+      const reply = validationResponse.text.trim().toLowerCase();
+      // Only reject if it explicitly answers false or negative
+      const isInvalid =
+        reply === "false" ||
+        reply.includes('"valid": false') ||
+        reply.includes('"valid":false') ||
+        (reply.startsWith("false") && !reply.includes("true"));
+
+      if (isInvalid) {
         return new Response(
           JSON.stringify({
             error:
@@ -469,19 +481,42 @@ export async function POST(req: Request) {
   // Detect which skills apply to this prompt
   let detectedSkills: SkillName[] = [];
   try {
-    const skillResult = await generateObject({
+    const skillResponse = await generateText({
       model: fastLlm.model,
       system: SKILL_DETECTION_PROMPT,
       prompt: `User prompt: "${prompt}"`,
-      schema: z.object({
-        skills: z.array(z.enum(SKILL_NAMES)),
-      }),
       ...getProviderOptions(fastLlm),
     });
-    detectedSkills = skillResult.object.skills;
+
+    const text = skillResponse.text.trim();
+    let extracted: string[] = [];
+    try {
+      const jsonMatch = text.match(/\[[\s\S]*\]/) || text.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        const parsed = JSON.parse(jsonMatch[0]);
+        if (Array.isArray(parsed)) {
+          extracted = parsed;
+        } else if (parsed && Array.isArray(parsed.skills)) {
+          extracted = parsed.skills;
+        }
+      }
+    } catch {
+      // Fallback to text matching
+    }
+
+    detectedSkills = SKILL_NAMES.filter(
+      (skill) =>
+        extracted.includes(skill) ||
+        text.toLowerCase().includes(skill.toLowerCase()),
+    );
+    // Enforce core Bang Motion law: if nothing matched, include anti-ppt
+    if (detectedSkills.length === 0) {
+      detectedSkills = ["anti-ppt"];
+    }
     console.log("Detected skills:", detectedSkills);
   } catch (skillError) {
     console.error("Skill detection error:", skillError);
+    detectedSkills = ["anti-ppt"];
   }
 
   // Filter out skills that were already used in the conversation to avoid redundant context
@@ -640,15 +675,58 @@ Analyze the request and decide: use targeted edits (type: "edit") for small chan
         },
       ];
 
-      const editResult = await generateObject({
-        model: resolved.model,
-        system: FOLLOW_UP_SYSTEM_PROMPT + languageInstruction,
-        messages: editMessages,
-        schema: FollowUpResponseSchema,
-        ...getProviderOptions(resolved),
-      });
+      let response: {
+        type: "edit" | "full";
+        summary: string;
+        edits?: EditOperation[];
+        code?: string;
+      };
 
-      const response = editResult.object;
+      try {
+        const editResult = await generateObject({
+          model: resolved.model,
+          system: FOLLOW_UP_SYSTEM_PROMPT + languageInstruction,
+          messages: editMessages,
+          schema: FollowUpResponseSchema,
+          ...getProviderOptions(resolved),
+        });
+        response = editResult.object;
+      } catch (objErr) {
+        // Fallback for LLM gateways without strict JSON schema enforcement
+        const editResponse = await generateText({
+          model: resolved.model,
+          system:
+            FOLLOW_UP_SYSTEM_PROMPT +
+            `\n\nCRITICAL: Respond ONLY with a valid JSON object matching this schema:\n{"type": "edit" | "full", "summary": "brief summary", "edits": [{"description": "...", "old_string": "...", "new_string": "..."}], "code": "full code if type is full"}` +
+            languageInstruction,
+          messages: editMessages,
+          ...getProviderOptions(resolved),
+        });
+
+        const rawText = editResponse.text;
+        const match = rawText.match(/\{[\s\S]*\}/);
+        if (!match) throw objErr;
+        const parsed = JSON.parse(match[0]);
+        const type = parsed.type === "full" ? "full" : "edit";
+        const summary = parsed.summary || "Animation updated";
+        const edits: EditOperation[] | undefined =
+          type === "edit" && Array.isArray(parsed.edits)
+            ? parsed.edits
+                .map((e: any) => ({
+                  description: e.description || "Edit code",
+                  old_string: e.old_string || e.oldText || e.search || "",
+                  new_string: e.new_string || e.newText || e.replace || "",
+                }))
+                .filter((e: EditOperation) => e.old_string.length > 0)
+            : undefined;
+
+        response = {
+          type,
+          summary,
+          edits,
+          code: parsed.code,
+        };
+      }
       let finalCode: string;
       let editType: "tool_edit" | "full_replacement";
       let appliedEdits: EditOperation[] | undefined;

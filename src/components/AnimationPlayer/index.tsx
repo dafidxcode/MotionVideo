@@ -56,6 +56,12 @@ export const AnimationPlayer: React.FC<AnimationPlayerProps> = ({
   code,
   onRuntimeError,
   onFrameChange,
+  onCodeChange,
+  onDurationChange,
+  initialVoice,
+  initialVoiceModel,
+  initialLanguage,
+  initialAutoCaption,
 }) => {
   const playerRef = useRef<PlayerRef>(null);
 
@@ -156,6 +162,19 @@ export const AnimationPlayer: React.FC<AnimationPlayerProps> = ({
           />
         </div>
         <div className="flex items-center justify-between gap-4 mt-4">
+          <div className="flex items-center gap-3">
+            <VoiceoverModal
+              code={code}
+              onCodeChange={onCodeChange}
+              durationInFrames={durationInFrames}
+              fps={fps}
+              onDurationChange={onDurationChange}
+              initialVoice={initialVoice}
+              initialVoiceModel={initialVoiceModel}
+              initialLanguage={initialLanguage}
+              initialAutoCaption={initialAutoCaption}
+            />
+          </div>
           <RenderControls
             code={code}
             durationInFrames={durationInFrames}

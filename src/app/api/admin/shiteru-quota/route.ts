@@ -14,48 +14,51 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "Access denied: Admin only" }, { status: 403 });
   }
 
-  const apiKey = process.env.SHITERU_API_KEY;
+  const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) {
     return NextResponse.json(
-      { error: "SHITERU_API_KEY is not configured in .env" },
+      { error: "ANTHROPIC_API_KEY is not configured in .env" },
       { status: 400 },
     );
   }
 
   try {
-    const res = await fetch("https://shiteru.id/api/public/key/quota", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ apiKey }),
+    const res = await fetch("https://api.anthropic.com/v1/models", {
+      headers: {
+        "x-api-key": apiKey,
+        "anthropic-version": "2023-06-01",
+      },
     });
 
     if (!res.ok) {
       const errText = await res.text();
       return NextResponse.json(
-        { error: `Shiteru API error: ${errText}` },
+        { error: `Anthropic API error: ${errText}` },
         { status: res.status },
       );
     }
 
-    const quotaData = await res.json();
+    const keyPrefix = apiKey.slice(0, 15);
     return NextResponse.json({
       success: true,
-      provider: "shiteru",
-      baseUrl: process.env.SHITERU_BASE_URL || "https://shiteru.id/v1",
-      data: quotaData,
+      provider: "anthropic",
+      baseUrl: "https://api.anthropic.com/v1",
+      data: {
+        key: {
+          keyPrefix,
+          status: "ACTIVE",
+          type: "Official Anthropic API Key",
+        },
+      },
       models: [
-        "gpt-6.1-sol",
-        "gpt-6-astra",
-        "gpt-6-sol",
-        "gpt-6-luna",
-        "gpt-5.6-sol",
-        "gpt-5.6-terra",
-        "gpt-5.6-luna",
+        "claude-opus-5-5",
+        "claude-sonnet-5-5",
+        "claude-haiku-5-5",
       ],
     });
   } catch (err: any) {
     return NextResponse.json(
-      { error: err.message || "Failed to contact Shiteru endpoint" },
+      { error: err.message || "Failed to contact Anthropic endpoint" },
       { status: 500 },
     );
   }

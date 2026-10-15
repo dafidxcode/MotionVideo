@@ -1,75 +1,43 @@
-export type LlmProviderName = "shiteru" | "openai";
+export type LlmProviderName = "anthropic" | "openai";
 export type LlmModality = "text" | "image" | "video";
 
 export interface ModelOption {
   id: string;
   name: string;
   provider: LlmProviderName;
-  /** Input modalities yang didukung model ini (semua model di bawah multimodal). */
+  /** Input modalities yang didukung model ini (semua model Claude di bawah mendukung vision/multimodal). */
   modalities: LlmModality[];
   description: string;
 }
 
 /**
- * Katalog model multimodal SHITERU AI (OpenAI-compatible: https://shiteru.id/v1).
- * Mendukung modalitas input: TEXT, IMAGE, dan VIDEO (dieksrak ke sequence frame-images).
+ * Katalog model resmi Anthropic Claude API.
+ * Mendukung modalitas input: TEXT, IMAGE, dan VIDEO (diekstrak ke sequence frame-images).
  */
 export const MODELS: ModelOption[] = [
   {
-    id: "gpt-6.1-sol",
-    name: "GPT 6.1 Sol (Flagship)",
-    provider: "shiteru",
+    id: "claude-opus-5-5",
+    name: "Claude Opus 5.5",
+    provider: "anthropic",
     modalities: ["text", "image", "video"],
     description:
-      "Latest flagship model from Shiteru AI for motion graphics & code generation.",
+      "Most powerful flagship model from Anthropic for complex motion graphics & storytelling.",
   },
   {
-    id: "gpt-6-astra",
-    name: "GPT 6 Astra",
-    provider: "shiteru",
+    id: "claude-sonnet-5-5",
+    name: "Claude Sonnet 5.5",
+    provider: "anthropic",
     modalities: ["text", "image", "video"],
     description:
-      "High-capability model for complex animations and visual storytelling.",
+      "High-capability balanced model for fast, high-quality animation code generation.",
   },
   {
-    id: "gpt-6-sol",
-    name: "GPT 6 Sol",
-    provider: "shiteru",
+    id: "claude-haiku-5-5",
+    name: "Claude Haiku 5.5",
+    provider: "anthropic",
     modalities: ["text", "image", "video"],
     description:
-      "Balanced performance and intelligence for motion graphics workflows.",
-  },
-  {
-    id: "gpt-6-luna",
-    name: "GPT 6 Luna (Fast)",
-    provider: "shiteru",
-    modalities: ["text", "image", "video"],
-    description:
-      "Ultra-fast generation for rapid animation previews and iterations.",
-  },
-  {
-    id: "gpt-5.6-sol",
-    name: "GPT 5.6 Sol",
-    provider: "shiteru",
-    modalities: ["text", "image", "video"],
-    description:
-      "High-efficiency model for motion graphics and visual components.",
-  },
-  {
-    id: "gpt-5.6-terra",
-    name: "GPT 5.6 Terra",
-    provider: "shiteru",
-    modalities: ["text", "image", "video"],
-    description:
-      "Specialized model for structured animation sequences and layout design.",
-  },
-  {
-    id: "gpt-5.6-luna",
-    name: "GPT 5.6 Luna",
-    provider: "shiteru",
-    modalities: ["text", "image", "video"],
-    description:
-      "Lightweight fast model optimized for quick animations and edits.",
+      "Ultra-fast generation for rapid animation previews and validations.",
   },
 ];
 

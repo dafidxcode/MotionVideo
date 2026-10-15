@@ -2,8 +2,7 @@ import { getCombinedSkillContent } from "@/skills";
 import type { SkillName } from "@/skills";
 import { SKILL_DETECTION_PROMPT, SKILL_NAMES } from "@/skills";
 import {
-  getShiteruFastModel,
-  getOpenAIFastModel,
+  getAnthropicFastModel,
   getProviderOptions,
   resolveLlm,
 } from "@/lib/llm-provider";
@@ -412,9 +411,7 @@ export async function POST(req: Request) {
     }
   }
 
-  // Resolve LLM provider + model — Shiteru AI (OpenAI-compatible) & OpenAI:
-  // - pilihan user di UI (daftar model Shiteru) SELALU dihormati
-  // - kosong -> pakai LLM_PROVIDER + SHITERU_MODEL / OPENAI_MODEL dari ENV
+  // Resolve LLM provider + model — Anthropic Claude API:
   let resolved;
   try {
     resolved = resolveLlm(model);
@@ -422,7 +419,7 @@ export async function POST(req: Request) {
     return new Response(
       JSON.stringify({
         error:
-          keyError instanceof Error ? keyError.message : "Missing LLM API key.",
+          keyError instanceof Error ? keyError.message : "Missing Anthropic API key.",
       }),
       {
         status: 400,
@@ -432,14 +429,10 @@ export async function POST(req: Request) {
   }
   const { modelName, provider } = resolved;
 
-  // Fast/cheap model dari provider YANG SAMA untuk validasi & deteksi skill
+  // Fast model untuk validasi & deteksi skill (claude-haiku-5-5)
   let fastLlm;
   try {
-    fastLlm = resolveLlm(
-      provider === "shiteru"
-        ? getShiteruFastModel()
-        : getOpenAIFastModel(),
-    );
+    fastLlm = resolveLlm(getAnthropicFastModel(), { fast: true });
   } catch {
     fastLlm = resolved;
   }

@@ -625,7 +625,7 @@ export default function AdminPage() {
               }`}
           >
             <Cpu size={14} />
-            <span>Shiteru AI & Quota</span>
+            <span>Anthropic AI & Models</span>
             <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
           </button>
         </div>
@@ -1279,7 +1279,7 @@ export default function AdminPage() {
           </div>
         )}
 
-        {/* ── TAB 5: SHITERU AI ENGINE & LIVE QUOTA ───────────────────────────── */}
+        {/* ── TAB 5: ANTHROPIC AI ENGINE & LIVE STATUS ───────────────────────────── */}
         {activeTab === "shiteru" && (
           <div className="space-y-6">
             {/* Header Card */}
@@ -1289,7 +1289,7 @@ export default function AdminPage() {
                   <div className="flex items-center gap-2.5">
                     <h3 className="text-base sm:text-lg font-bold text-white flex items-center gap-2">
                       <Cpu size={18} className="text-[#A1A1AA]" />
-                      Shiteru ID - Provider
+                      Anthropic Claude - Official API
                     </h3>
                   </div>
                 </div>
@@ -1305,12 +1305,12 @@ export default function AdminPage() {
                     <span>{shiteruLoading ? "Refreshing..." : "Refresh"}</span>
                   </button>
                   <a
-                    href="https://shiteru.id"
+                    href="https://console.anthropic.com"
                     target="_blank"
                     rel="noreferrer"
                     className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-[#1C1C20] border border-[#28282C] text-[#A1A1AA] hover:text-white text-xs font-medium transition-colors"
                   >
-                    <span>Dashboard</span>
+                    <span>Console</span>
                     <ExternalLink size={13} />
                   </a>
                 </div>
@@ -1321,10 +1321,10 @@ export default function AdminPage() {
                 <div className="p-3.5 rounded-xl bg-[#0E0E11] border border-[#28282C] space-y-1">
                   <span className="text-[10px] font-mono text-[#8E8E93] uppercase flex items-center gap-1.5">
                     <Server size={12} className="text-[#A1A1AA]" />
-                    Gateway URL
+                    API Endpoint
                   </span>
                   <p className="text-xs font-mono text-white font-medium truncate">
-                    https://shiteru.id/v1
+                    https://api.anthropic.com/v1
                   </p>
                 </div>
 
@@ -1336,7 +1336,7 @@ export default function AdminPage() {
                   <p className="text-xs font-mono text-[#D4D4D8] font-medium truncate">
                     {shiteruData?.data?.key?.keyPrefix
                       ? `${shiteruData.data.key.keyPrefix}...`
-                      : "sk_live_ROlB-F7V..."}
+                      : "sk-ant-usr-1Siu..."}
                   </p>
                 </div>
 
@@ -1346,7 +1346,7 @@ export default function AdminPage() {
                     Default Model
                   </span>
                   <p className="text-xs font-mono text-white font-medium">
-                    gpt-6.1-sol (Fast: gpt-6-luna)
+                    claude-opus-5-5 (Fast: claude-haiku-5-5)
                   </p>
                 </div>
 
@@ -1377,54 +1377,30 @@ export default function AdminPage() {
                 <div>
                   <h4 className="text-sm font-bold text-white flex items-center gap-2">
                     <Cpu size={15} className="text-[#A1A1AA]" />
-                    Katalog Model
+                    Katalog Model Anthropic Aktif
                   </h4>
                 </div>
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                 {[
                   {
-                    id: "gpt-6.1-sol",
-                    name: "GPT 6.1 Sol",
-                    badge: "Default",
-                    desc: "Model tercanggih Shiteru AI untuk coding React/Remotion kompleks.",
+                    id: "claude-opus-5-5",
+                    name: "Claude Opus 5.5",
+                    badge: "Flagship / Default",
+                    desc: "Model tercanggih Anthropic untuk penalaran tinggi & arsitektur Remotion kompleks.",
                   },
                   {
-                    id: "gpt-6-astra",
-                    name: "GPT 6 Astra",
-                    badge: "Frontier High",
-                    desc: "Kemampuan penalaran tinggi untuk animasi storyboard dan kinetic typography.",
+                    id: "claude-sonnet-5-5",
+                    name: "Claude Sonnet 5.5",
+                    badge: "High-Performance",
+                    desc: "Keseimbangan ideal antara kecepatan dan akurasi tinggi untuk coding animasi.",
                   },
                   {
-                    id: "gpt-6-sol",
-                    name: "GPT 6 Sol",
-                    badge: "Balanced",
-                    desc: "Keseimbangan kecepatan dan kecerdasan tinggi untuk workflow studio.",
-                  },
-                  {
-                    id: "gpt-6-luna",
-                    name: "GPT 6 Luna",
-                    badge: "Fast / Cheap",
-                    desc: "Model ultra-cepat untuk revisi chatbot instan dan validasi prompt.",
-                  },
-                  {
-                    id: "gpt-5.6-sol",
-                    name: "GPT 5.6 Sol",
-                    badge: "Stable Workhorse",
-                    desc: "Efisiensi tinggi dan stabil untuk komponen motion graphics.",
-                  },
-                  {
-                    id: "gpt-5.6-terra",
-                    name: "GPT 5.6 Terra",
-                    badge: "Structured",
-                    desc: "Optimal untuk transisi terstruktur dan layout visual responsif.",
-                  },
-                  {
-                    id: "gpt-5.6-luna",
-                    name: "GPT 5.6 Luna",
-                    badge: "Lightweight",
-                    desc: "Model hemat daya untuk pengeditan cepat.",
+                    id: "claude-haiku-5-5",
+                    name: "Claude Haiku 5.5",
+                    badge: "Fast / Validation",
+                    desc: "Model ultra-cepat untuk validasi prompt, deteksi skill, dan revisi instan.",
                   },
                 ].map((m) => (
                   <div

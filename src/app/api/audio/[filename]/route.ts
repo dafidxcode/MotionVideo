@@ -75,14 +75,14 @@ export async function GET(
     headers.set("Content-Range", `bytes ${start}-${end}/${fileSize}`);
     headers.set("Content-Length", String(chunk.length));
 
-    return new NextResponse(chunk, {
+    return new Response(new Uint8Array(chunk), {
       status: 206,
       headers,
     });
   }
 
   headers.set("Content-Length", String(fileSize));
-  return new NextResponse(audioBuffer, {
+  return new Response(new Uint8Array(audioBuffer), {
     status: 200,
     headers,
   });

@@ -340,6 +340,7 @@ function GeneratePageContent() {
                   `🎙️ **Voiceover & Captions Ready!**\nAuto-applied SwdVoice (${engineLabel}) with ${initialAutoCaption ? "word-level synced captions" : "clean audio narration"}. You can preview the complete video now or customize anything below.`,
                   completeCode,
                 );
+                saveProjectState(completeCode);
               }
             } else {
               const errData = await res.json().catch(() => ({}));

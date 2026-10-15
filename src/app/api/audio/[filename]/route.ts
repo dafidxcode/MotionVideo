@@ -49,6 +49,23 @@ export async function GET(
     return NextResponse.json({ error: "Audio file not found" }, { status: 404 });
   }
 
+  // Inspect magic bytes to guarantee 100% correct MIME type
+  if (
+    audioBuffer.length >= 2 &&
+    ((audioBuffer[0] === 0xff && (audioBuffer[1] & 0xe0) === 0xe0) ||
+      (audioBuffer[0] === 0x49 && audioBuffer[1] === 0x44 && audioBuffer[2] === 0x33))
+  ) {
+    contentType = "audio/mpeg";
+  } else if (
+    audioBuffer.length >= 4 &&
+    audioBuffer[0] === 0x52 &&
+    audioBuffer[1] === 0x49 &&
+    audioBuffer[2] === 0x46 &&
+    audioBuffer[3] === 0x46
+  ) {
+    contentType = "audio/wav";
+  }
+
   const fileSize = audioBuffer.length;
   const rangeHeader = req.headers.get("range");
 

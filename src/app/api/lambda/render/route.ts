@@ -88,6 +88,16 @@ export const POST = executeApi<RenderMediaOnLambdaOutput, typeof RenderRequest>(
         .replace(/[^a-zA-Z0-9_-]/g, "");
       const uniqueFileName = `swdbot-motion-${sanitizedUser}-${Date.now()}.mp4`;
 
+      // Ensure any relative audio URLs are expanded to full HTTPS URL so Lambda can load them
+      const processedInputProps = { ...body.inputProps };
+      if (processedInputProps.code && processedInputProps.code.includes('src="/api/audio/')) {
+        const baseUrl = process.env.NEXT_PUBLIC_APP_URL || "https://swdbot.tech";
+        processedInputProps.code = processedInputProps.code.replace(
+          /src="\/api\/audio\//g,
+          `src="${baseUrl}/api/audio/`,
+        );
+      }
+
       const result = await renderMediaOnLambda({
         codec: "h264",
         functionName: speculateFunctionName({
@@ -98,7 +108,7 @@ export const POST = executeApi<RenderMediaOnLambdaOutput, typeof RenderRequest>(
         region: REGION as AwsRegion,
         serveUrl: SITE_NAME,
         composition: COMP_NAME,
-        inputProps: body.inputProps,
+        inputProps: processedInputProps,
         framesPerLambda: 60,
         downloadBehavior: {
           type: "download",

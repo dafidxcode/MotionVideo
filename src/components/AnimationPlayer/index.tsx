@@ -171,6 +171,8 @@ export const AnimationPlayer: React.FC<AnimationPlayerProps> = ({
             doubleClickToFullscreen={true}
             showVolumeControls={true}
             initiallyMuted={false}
+            initialVolume={1}
+            numberOfSharedAudioTags={0}
           />
         </div>
 

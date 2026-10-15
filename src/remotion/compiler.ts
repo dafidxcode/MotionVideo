@@ -1,5 +1,8 @@
 import * as Babel from "@babel/standalone";
-import { Lottie } from "@remotion/lottie";
+let Lottie: any = () => null;
+try {
+  Lottie = require("@remotion/lottie")?.Lottie || (() => null);
+} catch {}
 import * as RemotionShapes from "@remotion/shapes";
 import { ThreeCanvas } from "@remotion/three";
 import {
@@ -186,6 +189,15 @@ return __RootDynamicComponent;`;
       wrappedCode,
     );
 
+    const SafeAudio = React.forwardRef((props: any, ref: any) => {
+      return React.createElement(Audio, {
+        crossOrigin: "anonymous",
+        volume: 1,
+        ...props,
+        ref,
+      });
+    });
+
     const Component = createComponent(
       React,
       Remotion,
@@ -194,7 +206,7 @@ return __RootDynamicComponent;`;
       ThreeCanvas,
       THREE,
       AbsoluteFill,
-      Audio,
+      SafeAudio,
       interpolate,
       useCurrentFrame,
       useVideoConfig,

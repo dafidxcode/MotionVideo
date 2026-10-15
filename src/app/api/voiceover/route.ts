@@ -176,12 +176,12 @@ export async function POST(req: Request) {
 
     // 2. Download audio bytes and persist to S3 & memory streaming route
     const audioBuffer = await downloadHeyGenAudio(synthesis.audioUrl);
-    const persisted = await persistAudio(audioBuffer, "wav");
+    const persisted = await persistAudio(audioBuffer);
 
     // Order of reliability:
-    // S3 presigned URL (works for browser + Lambda) > dynamic API route (/api/audio/vo-xxx.wav) > direct HeyGen CDN URL
-    const reliableAudioUrl = persisted.s3Url || persisted.apiUrl || synthesis.audioUrl;
-    const base64AudioUrl = `data:audio/wav;base64,${Buffer.from(audioBuffer).toString("base64")}`;
+    // Dynamic API route (/api/audio/vo-xxx.mp3) is SAME-ORIGIN to the site -> 100% immune to CORS & browser Web Audio cross-origin muting!
+    const reliableAudioUrl = persisted.apiUrl || persisted.s3Url || synthesis.audioUrl;
+    const base64AudioUrl = `data:audio/mpeg;base64,${Buffer.from(audioBuffer).toString("base64")}`;
 
     let words = synthesis.words;
     let duration = synthesis.duration;
@@ -201,8 +201,9 @@ export async function POST(req: Request) {
         engine: synthesis.engine ?? parsed.engine,
         duration: `${duration.toFixed(2)}s`,
         wordCount: words.length,
-        audioSource: persisted.s3Url ? "AWS S3 Presigned URL" : "Dynamic Next.js Stream Route",
+        audioSource: "Same-Origin Dynamic Stream Route (CORS-free)",
         audioUrl: reliableAudioUrl,
+        s3Url: persisted.s3Url,
       },
     });
 
@@ -210,7 +211,8 @@ export async function POST(req: Request) {
       provider: "heygen",
       audioUrl: reliableAudioUrl,
       fileUrl: reliableAudioUrl,
-      remoteAudioUrl: reliableAudioUrl,
+      remoteAudioUrl: persisted.s3Url || reliableAudioUrl,
+      s3Url: persisted.s3Url,
       apiUrl: persisted.apiUrl,
       dataUrl: base64AudioUrl,
       voice: parsed.voice,

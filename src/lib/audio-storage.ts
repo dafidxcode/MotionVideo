@@ -29,6 +29,16 @@ function getS3Client(): S3Client | null {
   });
 }
 
+export function detectAudioFormat(buffer: Buffer): { ext: "mp3" | "wav"; contentType: string } {
+  if (
+    (buffer.length >= 2 && buffer[0] === 0xff && (buffer[1] & 0xe0) === 0xe0) ||
+    (buffer.length >= 3 && buffer[0] === 0x49 && buffer[1] === 0x44 && buffer[2] === 0x33)
+  ) {
+    return { ext: "mp3", contentType: "audio/mpeg" };
+  }
+  return { ext: "wav", contentType: "audio/wav" };
+}
+
 export interface PersistAudioResult {
   s3Url: string | null;
   apiUrl: string;
@@ -38,11 +48,13 @@ export interface PersistAudioResult {
 
 export async function persistAudio(
   bytes: ArrayBuffer,
-  extension: "wav" | "mp3" = "wav",
+  requestedExt?: "wav" | "mp3",
 ): Promise<PersistAudioResult> {
-  const filename = `vo-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${extension}`;
-  const contentType = extension === "wav" ? "audio/wav" : "audio/mpeg";
   const buffer = Buffer.from(bytes);
+  const detected = detectAudioFormat(buffer);
+  const extension = requestedExt || detected.ext;
+  const contentType = detected.contentType;
+  const filename = `vo-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${extension}`;
   let s3Url: string | null = null;
   let localUrl: string | null = null;
 

@@ -4,6 +4,7 @@ import { Player, type ErrorFallback, type PlayerRef } from "@remotion/player";
 import React, { useEffect, useRef } from "react";
 import { ErrorDisplay, type ErrorType } from "../ErrorDisplay";
 import { RenderControls } from "./RenderControls";
+import { VoiceoverModal } from "./VoiceoverModal";
 
 const errorTitles: Record<ErrorType, string> = {
   validation: "Invalid Prompt",
@@ -149,8 +150,8 @@ export const AnimationPlayer: React.FC<AnimationPlayerProps> = ({
             autoPlay
             loop
             errorFallback={renderErrorFallback}
-            spaceKeyToPlayOrPause={false}
-            clickToPlay={false}
+            spaceKeyToPlayOrPause={true}
+            clickToPlay={true}
             initiallyMuted={false}
           />
         </div>

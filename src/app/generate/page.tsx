@@ -282,9 +282,9 @@ function GeneratePageContent() {
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({
                 text: script.trim(),
-                voice: initialVoice,
+                voice: effectiveVoice,
                 engine: initialVoiceModel,
-                language: initialLanguage,
+                language: initialLanguage || "id",
                 speed: 1.0,
                 withCaptions: initialAutoCaption,
               }),

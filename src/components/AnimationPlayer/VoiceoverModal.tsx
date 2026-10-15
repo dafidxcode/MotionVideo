@@ -267,7 +267,7 @@ export function VoiceoverModal({
         throw new Error(data.error || "Failed to generate voiceover audio.");
       }
 
-      setGeneratedAudioUrl(data.audioUrl);
+      setGeneratedAudioUrl(data.fileUrl || data.remoteAudioUrl || data.audioUrl);
       if (data.words && Array.isArray(data.words)) {
         setWords(data.words);
       }

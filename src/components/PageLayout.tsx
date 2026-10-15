@@ -15,17 +15,17 @@ export function PageLayout({
   showLogoAsLink = false,
 }: PageLayoutProps) {
   return (
-    <div className="h-screen w-screen bg-background flex flex-col overflow-hidden">
-      <header className="flex justify-between items-center py-3 sm:py-4 px-3 sm:px-6 lg:px-12 shrink-0 border-b border-[#28282C] bg-[#0A0A0B]/80 backdrop-blur-md z-10">
+    <div className="fixed inset-0 h-full w-full bg-background flex flex-col overflow-hidden">
+      <header className="flex justify-between items-center py-2.5 sm:py-3 px-3 sm:px-6 lg:px-10 shrink-0 border-b border-[#28282C] bg-[#0A0A0B]/90 backdrop-blur-md z-20">
         <Header asLink={showLogoAsLink} />
         <div className="flex items-center gap-2 sm:gap-3">
           {rightContent}
           <UserHeaderProfile />
         </div>
       </header>
-      <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
+      <main className="flex-1 min-h-0 overflow-hidden flex flex-col relative">
         {children}
-      </div>
+      </main>
     </div>
   );
 }

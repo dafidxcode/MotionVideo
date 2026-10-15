@@ -29,8 +29,8 @@ export const StylePicker: React.FC<StylePickerProps> = ({
         </span>
       </div>
 
-      {/* Grid of Styles - Clean sleek scrollbar with generous bottom padding so cards are never cut off */}
-      <div className="flex-1 overflow-y-auto pr-1.5 pb-28 space-y-3 [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:bg-[#2E2E34] hover:[&::-webkit-scrollbar-thumb]:bg-[#404048] [&::-webkit-scrollbar-thumb]:rounded-full">
+      {/* Grid of Styles - Clean sleek scrollbar */}
+      <div className="flex-1 overflow-y-auto pr-1.5 pb-6 space-y-3 [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:bg-[#2E2E34] hover:[&::-webkit-scrollbar-thumb]:bg-[#404048] [&::-webkit-scrollbar-thumb]:rounded-full">
         <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
           {BANG_MOTION_STYLES.map((style) => {
             const isSelected = selectedStyleId === style.id;

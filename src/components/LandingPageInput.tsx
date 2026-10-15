@@ -349,7 +349,7 @@ export function LandingPageInput({
   }, []);
 
   return (
-    <div className="flex-1 grid grid-cols-1 lg:grid-cols-12 gap-5 lg:gap-6 px-3 sm:px-6 lg:px-12 pb-4 sm:pb-8 min-h-0 overflow-hidden font-sans">
+    <div className="flex-1 grid grid-cols-1 lg:grid-cols-12 gap-4 lg:gap-6 px-3 sm:px-6 lg:px-10 py-2 sm:py-3 min-h-0 h-full overflow-hidden font-sans">
       {/* Mobile Tab Switcher (Visible on mobile/tablet, hidden on lg desktop) */}
       <div className="col-span-12 flex lg:hidden items-center p-1 bg-[#18181B] rounded-xl border border-[#28282C] shrink-0">
         <button
@@ -381,7 +381,7 @@ export function LandingPageInput({
       {/* Left Column: Prompt Input & Controls (1/3 of the layout on desktop) */}
       <div
         className={cn(
-          "col-span-12 lg:col-span-4 flex flex-col justify-between h-full overflow-y-auto pr-1.5 pb-20 [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:bg-[#2E2E34] hover:[&::-webkit-scrollbar-thumb]:bg-[#404048] [&::-webkit-scrollbar-thumb]:rounded-full min-w-0",
+          "col-span-12 lg:col-span-4 flex flex-col h-full overflow-y-auto pr-1.5 pb-4 [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:bg-[#2E2E34] hover:[&::-webkit-scrollbar-thumb]:bg-[#404048] [&::-webkit-scrollbar-thumb]:rounded-full min-w-0",
           mobileTab !== "prompt" && "hidden lg:flex"
         )}
       >
@@ -966,7 +966,7 @@ export function LandingPageInput({
             </div>
 
             {/* Quick Action Button */}
-            <div className="flex flex-col gap-2 mt-3.5 pb-6">
+            <div className="flex flex-col gap-2 mt-3 pb-2">
               {!activeStyle && (
                 <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-amber-400/10 border border-amber-400/20 text-amber-300 text-xs animate-in fade-in">
                   <span>Select a Visual Motion Style to continue</span>

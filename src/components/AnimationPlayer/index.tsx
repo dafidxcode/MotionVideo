@@ -143,13 +143,15 @@ export const AnimationPlayer: React.FC<AnimationPlayerProps> = ({
 
     const hasAudio = /<Audio\b/.test(code);
     const hasCaptions = /<AnimatedCaptions\b/.test(code);
+    const audioMatch = code.match(/<Audio\s+[^>]*src=["']([^"']+)["']/);
+    const audioSrc = audioMatch ? audioMatch[1] : "";
 
     return (
       <>
         <div className={`w-full ${aspectClass} max-h-[calc(100%-80px)] rounded-xl overflow-hidden shadow-[0_0_60px_rgba(0,0,0,0.5)] border border-[#28282C] relative bg-black`}>
           <Player
             ref={playerRef}
-            key={`${Component.toString()}-${aspectRatio}`}
+            key={`${aspectRatio}-${durationInFrames}-${audioSrc}`}
             component={Component}
             durationInFrames={durationInFrames}
             fps={fps}
@@ -161,11 +163,13 @@ export const AnimationPlayer: React.FC<AnimationPlayerProps> = ({
               backgroundColor: "transparent",
             }}
             controls
-            autoPlay
+            autoPlay={false}
             loop
             errorFallback={renderErrorFallback}
             spaceKeyToPlayOrPause={true}
             clickToPlay={true}
+            doubleClickToFullscreen={true}
+            showVolumeControls={true}
             initiallyMuted={false}
           />
         </div>

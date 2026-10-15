@@ -57,59 +57,90 @@ export const POST = executeApi<RenderMediaOnLambdaOutput, typeof RenderRequest>(
       }
     }
 
-    if (
-      !process.env.AWS_ACCESS_KEY_ID &&
-      !process.env.REMOTION_AWS_ACCESS_KEY_ID
-    ) {
-      throw new TypeError(
-        "Set up Remotion Lambda to render videos. See the README.md for how to do so.",
-      );
-    }
-    if (
-      !process.env.AWS_SECRET_ACCESS_KEY &&
-      !process.env.REMOTION_AWS_SECRET_ACCESS_KEY
-    ) {
-      throw new TypeError(
-        "The environment variable REMOTION_AWS_SECRET_ACCESS_KEY is missing. Add it to your .env file.",
+    const hasAwsKey =
+      Boolean(process.env.AWS_ACCESS_KEY_ID || process.env.REMOTION_AWS_ACCESS_KEY_ID);
+    const hasAwsSecret =
+      Boolean(process.env.AWS_SECRET_ACCESS_KEY || process.env.REMOTION_AWS_SECRET_ACCESS_KEY);
+
+    if (!hasAwsKey || !hasAwsSecret) {
+      throw new Error(
+        "AWS credentials missing. Please set REMOTION_AWS_ACCESS_KEY_ID and REMOTION_AWS_SECRET_ACCESS_KEY in environment variables.",
       );
     }
 
-    const sanitizedUser = (userEmail || "user")
-      .split("@")[0]
-      .replace(/[^a-zA-Z0-9_-]/g, "");
-    const uniqueFileName = `swdbot-motion-${sanitizedUser}-${Date.now()}.mp4`;
+    const { logRuntime } = await import("@/lib/runtime-logger");
+    const projId = body.projectId || "unspecified";
 
-    const result = await renderMediaOnLambda({
-      codec: "h264",
-      functionName: speculateFunctionName({
-        diskSizeInMb: DISK,
-        memorySizeInMb: RAM,
-        timeoutInSeconds: TIMEOUT,
-      }),
-      region: REGION as AwsRegion,
-      serveUrl: SITE_NAME,
-      composition: COMP_NAME,
-      inputProps: body.inputProps,
-      framesPerLambda: 60,
-      downloadBehavior: {
-        type: "download",
-        fileName: uniqueFileName,
+    logRuntime({
+      action: "VIDEO RENDER (AWS LAMBDA)",
+      status: "START",
+      userEmail: userEmail || "Guest User",
+      projectId: projId,
+      details: {
+        composition: COMP_NAME,
+        frames: body.inputProps?.durationInFrames || "default",
       },
     });
 
-    if (userEmail && body.projectId) {
-      const { saveUserProject } = await import("@/lib/projects");
-      saveUserProject({
-        id: body.projectId,
-        userEmail,
-        code: body.inputProps.code,
-        prompt: "Motion Graphics Video",
-        renderStatus: "rendering",
-        renderId: result.renderId,
-        renderBucket: result.bucketName,
-      }).catch(() => {});
-    }
+    try {
+      const sanitizedUser = (userEmail || "user")
+        .split("@")[0]
+        .replace(/[^a-zA-Z0-9_-]/g, "");
+      const uniqueFileName = `swdbot-motion-${sanitizedUser}-${Date.now()}.mp4`;
 
-    return result;
+      const result = await renderMediaOnLambda({
+        codec: "h264",
+        functionName: speculateFunctionName({
+          diskSizeInMb: DISK,
+          memorySizeInMb: RAM,
+          timeoutInSeconds: TIMEOUT,
+        }),
+        region: REGION as AwsRegion,
+        serveUrl: SITE_NAME,
+        composition: COMP_NAME,
+        inputProps: body.inputProps,
+        framesPerLambda: 60,
+        downloadBehavior: {
+          type: "download",
+          fileName: uniqueFileName,
+        },
+      });
+
+      if (userEmail && body.projectId) {
+        const { saveUserProject } = await import("@/lib/projects");
+        saveUserProject({
+          id: body.projectId,
+          userEmail,
+          code: body.inputProps.code,
+          prompt: "Motion Graphics Video",
+          renderStatus: "rendering",
+          renderId: result.renderId,
+          renderBucket: result.bucketName,
+        }).catch(() => {});
+      }
+
+      logRuntime({
+        action: "VIDEO RENDER (AWS LAMBDA)",
+        status: "SUCCESS",
+        userEmail: userEmail || "Guest User",
+        projectId: projId,
+        details: {
+          renderId: result.renderId,
+          bucket: result.bucketName,
+          fileName: uniqueFileName,
+        },
+      });
+
+      return result;
+    } catch (renderError: any) {
+      logRuntime({
+        action: "VIDEO RENDER (AWS LAMBDA)",
+        status: "FAILED",
+        userEmail: userEmail || "Guest User",
+        projectId: projId,
+        error: renderError,
+      });
+      throw renderError;
+    }
   },
 );

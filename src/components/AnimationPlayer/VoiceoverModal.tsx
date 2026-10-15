@@ -129,9 +129,9 @@ export function injectAudioAndCaptionsIntoCode(
   }
 
   // 4. Update or insert <Audio src="..." />
-  if (/<Audio\s+[^>]*\/>/.test(updated)) {
+  if (/<Audio\b[\s\S]*?(?:\/>|<\/Audio>)/.test(updated)) {
     updated = updated.replace(
-      /<Audio\s+[^>]*\/>/,
+      /<Audio\b[\s\S]*?(?:\/>|<\/Audio>)/,
       `<Audio src="${audioUrl}" />`,
     );
   } else {

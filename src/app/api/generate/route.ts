@@ -10,6 +10,7 @@ import { generateObject, generateText, streamText } from "ai";
 import { z } from "zod";
 import { verifySessionToken } from "@/lib/auth";
 import { chargeUserCredits } from "@/lib/credits";
+import { logRuntime } from "@/lib/runtime-logger";
 
 // Suppress AI SDK unsupported setting warnings for OpenAI-compatible proxies
 if (typeof globalThis !== "undefined") {
@@ -315,6 +316,7 @@ interface GenerateRequest {
   aspectRatio?: "16:9" | "9:16" | "1:1";
   duration?: number;
   fps?: number;
+  projectId?: string;
 }
 
 interface GenerateResponse {
@@ -346,6 +348,7 @@ export async function POST(req: Request) {
     aspectRatio = "16:9",
     duration = 300,
     fps = 30,
+    projectId,
   }: GenerateRequest = await req.json();
 
   // ── Authentication & Credit Deduction ─────────────────────────────────────
@@ -412,6 +415,23 @@ export async function POST(req: Request) {
       );
     }
   }
+
+  logRuntime({
+    action: isFollowUp ? "CHATBOT MOTION REVISION" : "MOTION GRAPHICS GENERATION",
+    status: "START",
+    userEmail: userEmail || "Guest User",
+    projectId,
+    details: {
+      model,
+      language,
+      aspectRatio,
+      voice: voice || "default",
+      voiceModel,
+      duration: `${Math.round((duration || 300) / (fps || 30))}s (${duration || 300} frames @ ${fps || 30}fps)`,
+      isFollowUp,
+      promptSample: `"${prompt.slice(0, 80).replace(/\n/g, " ")}..." (${prompt.length} chars)`,
+    },
+  });
 
   // Resolve LLM provider + model — Anthropic Claude API:
   let resolved;
@@ -783,11 +803,31 @@ Analyze the request and decide: use targeted edits (type: "edit") for small chan
         },
       };
 
+      logRuntime({
+        action: "CHATBOT MOTION REVISION",
+        status: "SUCCESS",
+        userEmail: userEmail || "Guest User",
+        projectId,
+        details: {
+          editType,
+          model: modelName,
+          codeLength: `${finalCode.length} characters`,
+          summary: response.summary,
+        },
+      });
+
       return new Response(JSON.stringify(responseData), {
         status: 200,
         headers: { "Content-Type": "application/json" },
       });
     } catch (error) {
+      logRuntime({
+        action: "CHATBOT MOTION REVISION",
+        status: "FAILED",
+        userEmail: userEmail || "Guest User",
+        projectId,
+        error,
+      });
       console.error("Error in follow-up edit:", error);
       return new Response(
         JSON.stringify({
@@ -887,6 +927,19 @@ Analyze the request and decide: use targeted edits (type: "edit") for small chan
           if (done) break;
           controller.enqueue(value);
         }
+        logRuntime({
+          action: "MOTION GRAPHICS GENERATION",
+          status: "SUCCESS",
+          userEmail: userEmail || "Guest User",
+          projectId,
+          details: {
+            provider,
+            model: modelName,
+            detectedSkills,
+            aspectRatio,
+            language,
+          },
+        });
         controller.close();
       },
     });
@@ -895,6 +948,13 @@ Analyze the request and decide: use targeted edits (type: "edit") for small chan
       headers: originalResponse.headers,
     });
   } catch (error) {
+    logRuntime({
+      action: "MOTION GRAPHICS GENERATION",
+      status: "FAILED",
+      userEmail: userEmail || "Guest User",
+      projectId,
+      error,
+    });
     console.error("Error generating code:", error);
     return new Response(
       JSON.stringify({

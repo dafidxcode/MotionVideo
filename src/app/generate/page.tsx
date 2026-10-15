@@ -291,7 +291,7 @@ function GeneratePageContent() {
         const effectiveVoiceModel = currentSettings.voiceModel || initialVoiceModel || "auto";
         const effectiveAutoCaption = currentSettings.autoCaption ?? initialAutoCaption;
 
-        if (script && !/<Audio\s+[^>]*\/>/.test(generatedCode)) {
+        if (script) {
           try {
             const res = await fetch("/api/voiceover", {
               method: "POST",
@@ -303,11 +303,12 @@ function GeneratePageContent() {
                 language: effectiveLanguage,
                 speed: 1.0,
                 withCaptions: effectiveAutoCaption,
+                projectId: projectId || undefined,
               }),
             });
             if (res.ok) {
               const data = await res.json();
-              const reliableAudioUrl = data.remoteAudioUrl || data.audioUrl || data.fileUrl;
+              const reliableAudioUrl = data.remoteAudioUrl || data.audioUrl || data.apiUrl || data.fileUrl;
               if (reliableAudioUrl) {
                 const completeCode = injectAudioAndCaptionsIntoCode(
                   generatedCode,

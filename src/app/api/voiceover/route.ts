@@ -10,6 +10,8 @@ import {
   type VoiceLanguageCode,
 } from "@/types/voice";
 import { persistAudio } from "@/lib/audio-storage";
+import { logRuntime } from "@/lib/runtime-logger";
+import { verifySessionToken } from "@/lib/auth";
 import { NextResponse } from "next/server";
 
 const DEFAULT_LANGUAGE: VoiceLanguageCode = "en";
@@ -24,6 +26,7 @@ interface VoiceoverRequest {
   engine: VoiceEngineId;
   speed: number;
   withCaptions: boolean;
+  projectId?: string;
 }
 
 function parseRequest(raw: unknown): VoiceoverRequest | string {
@@ -45,23 +48,16 @@ function parseRequest(raw: unknown): VoiceoverRequest | string {
     speed: Math.min(Math.max(rawSpeed, 0.5), 2),
     withCaptions: body.withCaptions !== false,
     voice: typeof body.voice === "string" ? body.voice.trim() : "",
+    projectId: typeof body.projectId === "string" ? body.projectId : undefined,
   };
 }
 
-/**
- * Optional word-timing fallback. HeyGen returns `word_timestamps` for most
- * voices; when it does not we can borrow Whisper timings if the app happens to
- * have OPENAI_API_KEY configured. Speech synthesis itself is always HeyGen.
- */
 async function transcribeWithWhisper(
   audio: ArrayBuffer,
 ): Promise<{ words: WordTiming[]; duration: number }> {
   const empty = { words: [] as WordTiming[], duration: 0 };
   const apiKey = process.env.OPENAI_API_KEY?.trim();
-  if (!apiKey) {
-    console.warn("No word timings available for caption sync.");
-    return empty;
-  }
+  if (!apiKey) return empty;
 
   try {
     const formData = new FormData();
@@ -76,13 +72,7 @@ async function transcribeWithWhisper(
       body: formData,
     });
 
-    if (!res.ok) {
-      console.warn(
-        "Whisper transcription warning:",
-        await res.text().catch(() => ""),
-      );
-      return empty;
-    }
+    if (!res.ok) return empty;
 
     const data = (await res.json()) as {
       words?: WordTiming[];
@@ -93,33 +83,89 @@ async function transcribeWithWhisper(
       duration: typeof data.duration === "number" ? data.duration : 0,
     };
   } catch (err) {
-    console.warn("Whisper transcription failed:", err);
+    console.warn("Whisper transcription warning:", err);
     return empty;
   }
 }
 
 export async function POST(req: Request) {
+  // Extract user identity from session cookie or auth header
+  const cookieHeader = req.headers.get("cookie") || "";
+  const authHeader = req.headers.get("authorization");
+  let token = "";
+  if (cookieHeader) {
+    const match = cookieHeader.match(/swdbot_session=([^;]+)/);
+    if (match) token = match[1];
+  }
+  if (!token && authHeader?.startsWith("Bearer ")) {
+    token = authHeader.substring(7);
+  }
+
+  let userEmail = "Guest User";
+  if (token) {
+    const verified = verifySessionToken(token);
+    if (verified.valid && verified.email) {
+      userEmail = verified.email;
+    }
+  }
+
+  let projectId: string | undefined;
+
   try {
     const parsed = parseRequest(await req.json());
 
     if (typeof parsed === "string") {
+      logRuntime({
+        action: "VOICEOVER TEXT-TO-SPEECH (HeyGen)",
+        status: "FAILED",
+        userEmail,
+        details: { reason: parsed },
+      });
       return NextResponse.json({ error: parsed }, { status: 400 });
     }
 
+    projectId = parsed.projectId;
+
+    logRuntime({
+      action: "VOICEOVER TEXT-TO-SPEECH (HeyGen)",
+      status: "START",
+      userEmail,
+      projectId,
+      details: {
+        voice: parsed.voice,
+        engine: parsed.engine,
+        language: parsed.language,
+        speed: `${parsed.speed}x`,
+        autoCaptions: parsed.withCaptions,
+        scriptSample: `"${parsed.text.slice(0, 80).replace(/\n/g, " ")}..." (${parsed.text.length} chars)`,
+      },
+    });
+
     if (!getHeyGenApiKey()) {
-      return NextResponse.json(
-        { error: "HEYGEN_API_KEY is not defined in .env file." },
-        { status: 500 },
-      );
+      const err = "HEYGEN_API_KEY is not defined in .env file.";
+      logRuntime({
+        action: "VOICEOVER TEXT-TO-SPEECH (HeyGen)",
+        status: "FAILED",
+        userEmail,
+        projectId,
+        error: err,
+      });
+      return NextResponse.json({ error: err }, { status: 500 });
     }
 
     if (!parsed.voice) {
-      return NextResponse.json(
-        { error: "No HeyGen voice selected." },
-        { status: 400 },
-      );
+      const err = "No HeyGen voice selected.";
+      logRuntime({
+        action: "VOICEOVER TEXT-TO-SPEECH (HeyGen)",
+        status: "FAILED",
+        userEmail,
+        projectId,
+        error: err,
+      });
+      return NextResponse.json({ error: err }, { status: 400 });
     }
 
+    // 1. Synthesize with HeyGen API
     const synthesis = await synthesizeWithHeyGen({
       text: parsed.text,
       voiceId: parsed.voice,
@@ -128,9 +174,13 @@ export async function POST(req: Request) {
       speed: parsed.speed,
     });
 
+    // 2. Download audio bytes and persist to S3 & memory streaming route
     const audioBuffer = await downloadHeyGenAudio(synthesis.audioUrl);
     const persisted = await persistAudio(audioBuffer, "wav");
-    const reliableAudioUrl = persisted.s3Url || persisted.localUrl || synthesis.audioUrl;
+
+    // Order of reliability:
+    // S3 presigned URL (works for browser + Lambda) > dynamic API route (/api/audio/vo-xxx.wav) > direct HeyGen CDN URL
+    const reliableAudioUrl = persisted.s3Url || persisted.apiUrl || synthesis.audioUrl;
     const base64AudioUrl = `data:audio/wav;base64,${Buffer.from(audioBuffer).toString("base64")}`;
 
     let words = synthesis.words;
@@ -141,11 +191,27 @@ export async function POST(req: Request) {
       duration = duration || whisper.duration;
     }
 
+    logRuntime({
+      action: "VOICEOVER TEXT-TO-SPEECH (HeyGen)",
+      status: "SUCCESS",
+      userEmail,
+      projectId,
+      details: {
+        voice: parsed.voice,
+        engine: synthesis.engine ?? parsed.engine,
+        duration: `${duration.toFixed(2)}s`,
+        wordCount: words.length,
+        audioSource: persisted.s3Url ? "AWS S3 Presigned URL" : "Dynamic Next.js Stream Route",
+        audioUrl: reliableAudioUrl,
+      },
+    });
+
     return NextResponse.json({
       provider: "heygen",
       audioUrl: reliableAudioUrl,
       fileUrl: reliableAudioUrl,
       remoteAudioUrl: reliableAudioUrl,
+      apiUrl: persisted.apiUrl,
       dataUrl: base64AudioUrl,
       voice: parsed.voice,
       engine: synthesis.engine ?? parsed.engine,
@@ -155,6 +221,13 @@ export async function POST(req: Request) {
       words,
     });
   } catch (error) {
+    logRuntime({
+      action: "VOICEOVER TEXT-TO-SPEECH (HeyGen)",
+      status: "FAILED",
+      userEmail,
+      projectId,
+      error,
+    });
     console.error("Error in /api/voiceover:", error);
     const message =
       error instanceof Error ? error.message : "Unknown voiceover error.";

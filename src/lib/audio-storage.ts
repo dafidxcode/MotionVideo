@@ -2,6 +2,7 @@ import { GetObjectCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import fs from "fs/promises";
 import path from "path";
+import { storeAudioInMemory } from "@/app/api/audio/[filename]/route";
 
 const REGION = process.env.REMOTION_AWS_REGION || "ap-southeast-2";
 const BUCKET_NAME =
@@ -9,7 +10,8 @@ const BUCKET_NAME =
 
 function getS3Client(): S3Client | null {
   const accessKeyId =
-    process.env.REMOTION_AWS_ACCESS_KEY_ID || process.env.AWS_ACCESS_KEY_ID;
+    process.env.REMOTION_AWS_ACCESS_KEY_ID ||
+    process.env.AWS_ACCESS_KEY_ID;
   const secretAccessKey =
     process.env.REMOTION_AWS_SECRET_ACCESS_KEY ||
     process.env.AWS_SECRET_ACCESS_KEY;
@@ -27,16 +29,31 @@ function getS3Client(): S3Client | null {
   });
 }
 
+export interface PersistAudioResult {
+  s3Url: string | null;
+  apiUrl: string;
+  localUrl: string | null;
+  filename: string;
+}
+
 export async function persistAudio(
   bytes: ArrayBuffer,
   extension: "wav" | "mp3" = "wav",
-): Promise<{ s3Url: string | null; localUrl: string | null }> {
+): Promise<PersistAudioResult> {
   const filename = `vo-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${extension}`;
   const contentType = extension === "wav" ? "audio/wav" : "audio/mpeg";
+  const buffer = Buffer.from(bytes);
   let s3Url: string | null = null;
   let localUrl: string | null = null;
 
-  // 1. Upload to AWS S3 bucket for 100% reliable cloud rendering & cross-origin playback
+  // 1. Immediately store in dynamic in-memory cache for ultra-reliable streaming via /api/audio/:filename
+  try {
+    storeAudioInMemory(filename, buffer, contentType);
+  } catch (memErr) {
+    console.warn("[SWDBOT RUNTIME] Audio memory cache warning:", memErr);
+  }
+
+  // 2. Upload to AWS S3 bucket for cloud rendering on Remotion Lambda
   try {
     const s3 = getS3Client();
     if (s3) {
@@ -45,12 +62,12 @@ export async function persistAudio(
         new PutObjectCommand({
           Bucket: BUCKET_NAME,
           Key: s3Key,
-          Body: Buffer.from(bytes),
+          Body: buffer,
           ContentType: contentType,
         }),
       );
 
-      // Generate a 7-day presigned URL so it's accessible anywhere (Lambda & client)
+      // Generate 7-day presigned URL
       s3Url = await getSignedUrl(
         s3,
         new GetObjectCommand({
@@ -59,20 +76,32 @@ export async function persistAudio(
         }),
         { expiresIn: 604800 }, // 7 days
       );
+      console.log(`[SWDBOT RUNTIME] S3 AUDIO PERSISTENCE SUCCESS: ${s3Key} (expires in 7 days)`);
     }
   } catch (s3Err) {
-    console.warn("Failed to upload audio to Remotion S3 bucket:", s3Err);
+    const errMessage = s3Err instanceof Error ? s3Err.message : String(s3Err);
+    console.warn(`[SWDBOT RUNTIME] S3 AUDIO PERSISTENCE WARNING: ${errMessage}`);
   }
 
-  // 2. Also save to public/voiceovers for local Next.js runtime fallback
+  // 3. Save to disk as secondary local cache
   try {
     const dir = path.join(process.cwd(), "public", "voiceovers");
     await fs.mkdir(dir, { recursive: true });
     await fs.writeFile(path.join(dir, filename), new Uint8Array(bytes));
     localUrl = `/voiceovers/${filename}`;
-  } catch (fsErr) {
-    console.warn("Failed to write to public/voiceovers:", fsErr);
+  } catch {
+    try {
+      const tmpDir = path.join("/tmp", "voiceovers");
+      await fs.mkdir(tmpDir, { recursive: true });
+      await fs.writeFile(path.join(tmpDir, filename), new Uint8Array(bytes));
+      localUrl = `/api/audio/${filename}`;
+    } catch {}
   }
 
-  return { s3Url, localUrl };
+  return {
+    s3Url,
+    apiUrl: `/api/audio/${filename}`,
+    localUrl,
+    filename,
+  };
 }

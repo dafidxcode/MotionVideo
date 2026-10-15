@@ -20,6 +20,7 @@ const Home: NextPage = () => {
       voiceModel?: string;
       voice?: string;
       autoCaption?: boolean;
+      aspectRatio?: string;
       duration?: number;
       fps?: number;
     },
@@ -39,6 +40,7 @@ const Home: NextPage = () => {
         voiceModel: options?.voiceModel || "auto",
         voice: options?.voice || "",
         autoCaption: options?.autoCaption ?? true,
+        aspectRatio: options?.aspectRatio || "16:9",
         duration: options?.duration || 300,
         fps: options?.fps || 30,
         attachedImages: attachedImages && attachedImages.length > 0 ? attachedImages : undefined,

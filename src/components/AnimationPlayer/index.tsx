@@ -1,10 +1,11 @@
 "use client";
 
 import { Player, type ErrorFallback, type PlayerRef } from "@remotion/player";
+import { CheckCircle2, Film, Sparkles } from "lucide-react";
 import React, { useEffect, useRef } from "react";
+import { getAspectRatioDimensions, type AspectRatioId } from "@/types/aspect-ratio";
 import { ErrorDisplay, type ErrorType } from "../ErrorDisplay";
 import { RenderControls } from "./RenderControls";
-import { VoiceoverModal } from "./VoiceoverModal";
 
 const errorTitles: Record<ErrorType, string> = {
   validation: "Invalid Prompt",
@@ -28,6 +29,7 @@ interface AnimationPlayerProps {
   durationInFrames: number;
   fps: number;
   projectId?: string;
+  aspectRatio?: AspectRatioId;
   onDurationChange?: (duration: number) => void;
   onFpsChange?: (fps: number) => void;
   isCompiling: boolean;
@@ -49,6 +51,7 @@ export const AnimationPlayer: React.FC<AnimationPlayerProps> = ({
   durationInFrames,
   fps,
   projectId,
+  aspectRatio = "16:9",
   isCompiling,
   isStreaming,
   error,
@@ -56,17 +59,19 @@ export const AnimationPlayer: React.FC<AnimationPlayerProps> = ({
   code,
   onRuntimeError,
   onFrameChange,
-  onCodeChange,
-  onDurationChange,
-  initialVoice,
-  initialVoiceModel,
-  initialLanguage,
-  initialAutoCaption,
 }) => {
   const playerRef = useRef<PlayerRef>(null);
 
+  const { width: compWidth, height: compHeight } = getAspectRatioDimensions(aspectRatio);
+
+  const aspectClass =
+    aspectRatio === "9:16"
+      ? "aspect-[9/16] max-w-[420px] mx-auto"
+      : aspectRatio === "1:1"
+        ? "aspect-square max-w-[560px] mx-auto"
+        : "aspect-video w-full";
+
   // Listen for runtime errors from the Player's error boundary
-  // Component is included in deps because the Player remounts when Component changes (via key={Component.toString()})
   useEffect(() => {
     const player = playerRef.current;
     if (!player || !onRuntimeError) return;
@@ -82,7 +87,6 @@ export const AnimationPlayer: React.FC<AnimationPlayerProps> = ({
   }, [onRuntimeError, Component]);
 
   // Listen for frame changes and report to parent
-  // Component is included in deps because the Player remounts when Component changes (via key={Component.toString()})
   useEffect(() => {
     const player = playerRef.current;
     if (!player || !onFrameChange) return;
@@ -100,10 +104,10 @@ export const AnimationPlayer: React.FC<AnimationPlayerProps> = ({
   const renderContent = () => {
     if (isStreaming) {
       return (
-        <div className="w-full aspect-video max-h-[calc(100%-80px)] flex flex-col justify-center items-center gap-4 bg-background-elevated rounded-lg overflow-hidden shadow-[0_0_60px_rgba(0,0,0,0.5)]">
-          <div className="w-12 h-12 border-4 border-border border-t-primary rounded-full animate-spin" />
-          <p className="text-muted-foreground text-sm">
-            Waiting for code generation to finish...
+        <div className={`w-full ${aspectClass} max-h-[calc(100%-80px)] flex flex-col justify-center items-center gap-4 bg-background-elevated rounded-xl overflow-hidden shadow-[0_0_60px_rgba(0,0,0,0.5)] border border-[#28282C]`}>
+          <div className="w-10 h-10 border-3 border-neutral-700 border-t-amber-400 rounded-full animate-spin" />
+          <p className="text-muted-foreground text-xs font-medium">
+            Generating motion animation & voiceover...
           </p>
         </div>
       );
@@ -111,8 +115,9 @@ export const AnimationPlayer: React.FC<AnimationPlayerProps> = ({
 
     if (isCompiling) {
       return (
-        <div className="w-full aspect-video max-h-[calc(100%-80px)] flex justify-center items-center bg-background-elevated rounded-lg overflow-hidden shadow-[0_0_60px_rgba(0,0,0,0.5)]">
-          <div className="w-12 h-12 border-4 border-border border-t-primary rounded-full animate-spin" />
+        <div className={`w-full ${aspectClass} max-h-[calc(100%-80px)] flex flex-col justify-center items-center gap-3 bg-background-elevated rounded-xl overflow-hidden shadow-[0_0_60px_rgba(0,0,0,0.5)] border border-[#28282C]`}>
+          <div className="w-10 h-10 border-3 border-neutral-700 border-t-amber-400 rounded-full animate-spin" />
+          <p className="text-muted-foreground text-xs">Compiling synchronized video...</p>
         </div>
       );
     }
@@ -130,23 +135,26 @@ export const AnimationPlayer: React.FC<AnimationPlayerProps> = ({
 
     if (!Component) {
       return (
-        <div className="w-full aspect-video max-h-[calc(100%-80px)] flex justify-center items-center bg-background-elevated rounded-lg overflow-hidden shadow-[0_0_60px_rgba(0,0,0,0.5)] text-muted-foreground-dim text-lg font-sans">
-          Select an example to get started
+        <div className={`w-full ${aspectClass} max-h-[calc(100%-80px)] flex justify-center items-center bg-background-elevated rounded-xl overflow-hidden shadow-[0_0_60px_rgba(0,0,0,0.5)] text-muted-foreground-dim text-sm font-sans border border-[#28282C]`}>
+          Select an example or generate to get started
         </div>
       );
     }
 
+    const hasAudio = /<Audio\b/.test(code);
+    const hasCaptions = /<AnimatedCaptions\b/.test(code);
+
     return (
       <>
-        <div className="w-full aspect-video max-h-[calc(100%-80px)] rounded-lg overflow-hidden shadow-[0_0_60px_rgba(0,0,0,0.5)]">
+        <div className={`w-full ${aspectClass} max-h-[calc(100%-80px)] rounded-xl overflow-hidden shadow-[0_0_60px_rgba(0,0,0,0.5)] border border-[#28282C] relative bg-black`}>
           <Player
             ref={playerRef}
-            key={Component.toString()}
+            key={`${Component.toString()}-${aspectRatio}`}
             component={Component}
             durationInFrames={durationInFrames}
             fps={fps}
-            compositionHeight={1080}
-            compositionWidth={1920}
+            compositionHeight={compHeight}
+            compositionWidth={compWidth}
             style={{
               width: "100%",
               height: "100%",
@@ -161,25 +169,39 @@ export const AnimationPlayer: React.FC<AnimationPlayerProps> = ({
             initiallyMuted={false}
           />
         </div>
-        <div className="flex items-center justify-between gap-4 mt-4">
-          <div className="flex items-center gap-3">
-            <VoiceoverModal
-              code={code}
-              onCodeChange={onCodeChange}
-              durationInFrames={durationInFrames}
-              fps={fps}
-              onDurationChange={onDurationChange}
-              initialVoice={initialVoice}
-              initialVoiceModel={initialVoiceModel}
-              initialLanguage={initialLanguage}
-              initialAutoCaption={initialAutoCaption}
-            />
+
+        {/* Bottom Control Bar */}
+        <div className="flex flex-wrap items-center justify-between gap-3 mt-4 px-1">
+          <div className="flex items-center gap-2">
+            <span className="text-[11px] font-mono font-semibold px-2 py-1 rounded-md bg-[#1F1F23] border border-[#28282C] text-[#F5F5F7] flex items-center gap-1.5">
+              <Film className="w-3 h-3 text-amber-400" />
+              <span>{aspectRatio}</span>
+              <span className="text-[#6E6E76]">({compWidth}x{compHeight})</span>
+            </span>
+
+            {hasAudio && (
+              <span className="text-[11px] font-semibold px-2 py-1 rounded-md bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 flex items-center gap-1.5">
+                <CheckCircle2 className="w-3 h-3" />
+                <span>Voiceover Synced</span>
+              </span>
+            )}
+
+            {hasCaptions && (
+              <span className="text-[11px] font-semibold px-2 py-1 rounded-md bg-amber-400/10 border border-amber-400/20 text-amber-300 flex items-center gap-1.5">
+                <Sparkles className="w-3 h-3" />
+                <span>Kinetic Subtitles</span>
+              </span>
+            )}
           </div>
+
           <RenderControls
             code={code}
             durationInFrames={durationInFrames}
             fps={fps}
             projectId={projectId}
+            aspectRatio={aspectRatio}
+            width={compWidth}
+            height={compHeight}
           />
         </div>
       </>

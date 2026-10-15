@@ -35,9 +35,19 @@ function GeneratePageContent() {
   const initialVoice = searchParams.get("voice") || "";
   const initialAutoCaption = searchParams.get("autoCaption") !== "false";
   const initialProjectId = searchParams.get("projectId") || null;
+  const initialAspectRatio = (searchParams.get("aspectRatio") as "16:9" | "9:16" | "1:1") || "16:9";
 
   const [projectId, setProjectId] = useState<string | null>(initialProjectId);
   const [renderedVideoUrl, setRenderedVideoUrl] = useState<string | null>(null);
+  const [aspectRatio, setAspectRatio] = useState<"16:9" | "9:16" | "1:1">(initialAspectRatio);
+
+  const pendingSettingsRef = useRef({
+    voice: initialVoice,
+    language: initialLanguage,
+    voiceModel: initialVoiceModel,
+    autoCaption: initialAutoCaption,
+    aspectRatio: initialAspectRatio,
+  });
 
   const initialDurationParam = searchParams.get("duration");
   const initialFpsParam = searchParams.get("fps");
@@ -271,11 +281,16 @@ function GeneratePageContent() {
       markAsAiGenerated();
       saveProjectState(generatedCode);
 
-      // Automatically synthesize the HeyGen voiceover and captions on first generation
-      const effectiveVoice = initialVoice || "f5d7ba1dfec24c32bc3c372e210d41ed";
+      // Automatically synthesize the HeyGen voiceover and captions on initial generation
       if (!autoVoiceoverAppliedRef.current) {
         autoVoiceoverAppliedRef.current = true;
-        const script = extractScriptFromCode(generatedCode) || initialPrompt;
+        const script = extractScriptFromCode(generatedCode) || prompt || initialPrompt;
+        const currentSettings = pendingSettingsRef.current;
+        const effectiveVoice = currentSettings.voice || initialVoice || "f5d7ba1dfec24c32bc3c372e210d41ed";
+        const effectiveLanguage = currentSettings.language || initialLanguage || "ms";
+        const effectiveVoiceModel = currentSettings.voiceModel || initialVoiceModel || "auto";
+        const effectiveAutoCaption = currentSettings.autoCaption ?? initialAutoCaption;
+
         if (script && !/<Audio\s+[^>]*\/>/.test(generatedCode)) {
           try {
             const res = await fetch("/api/voiceover", {
@@ -284,19 +299,20 @@ function GeneratePageContent() {
               body: JSON.stringify({
                 text: script.trim(),
                 voice: effectiveVoice,
-                engine: initialVoiceModel,
-                language: initialLanguage || "id",
+                engine: effectiveVoiceModel,
+                language: effectiveLanguage,
                 speed: 1.0,
-                withCaptions: initialAutoCaption,
+                withCaptions: effectiveAutoCaption,
               }),
             });
             if (res.ok) {
               const data = await res.json();
-              if (data.audioUrl) {
+              const reliableAudioUrl = data.remoteAudioUrl || data.audioUrl || data.fileUrl;
+              if (reliableAudioUrl) {
                 const completeCode = injectAudioAndCaptionsIntoCode(
                   generatedCode,
-                  data.audioUrl,
-                  initialAutoCaption && data.words ? data.words : [],
+                  reliableAudioUrl,
+                  effectiveAutoCaption && data.words ? data.words : [],
                 );
                 setCode(completeCode);
                 compileCode(completeCode);
@@ -409,6 +425,16 @@ function GeneratePageContent() {
 
         if (pending.duration) setDurationInFrames(pending.duration);
         if (pending.fps) setFps(pending.fps);
+        if (pending.aspectRatio) setAspectRatio(pending.aspectRatio);
+
+        pendingSettingsRef.current = {
+          voice: pending.voice || initialVoice,
+          language: pending.language || initialLanguage,
+          voiceModel: pending.voiceModel || initialVoiceModel,
+          autoCaption: pending.autoCaption ?? initialAutoCaption,
+          aspectRatio: pending.aspectRatio || initialAspectRatio,
+        };
+
         setPrompt(pending.prompt);
         setIsStreaming(true);
         setStreamPhase("reasoning");
@@ -420,6 +446,7 @@ function GeneratePageContent() {
             voice: pending.voice || initialVoice,
             voiceModel: pending.voiceModel || initialVoiceModel,
             autoCaption: pending.autoCaption ?? initialAutoCaption,
+            aspectRatio: pending.aspectRatio || initialAspectRatio,
             duration: pending.duration || durationInFrames,
             fps: pending.fps || fps,
           });
@@ -632,6 +659,7 @@ function GeneratePageContent() {
                   durationInFrames={durationInFrames}
                   fps={fps}
                   projectId={projectId ?? undefined}
+                  aspectRatio={aspectRatio}
                   onDurationChange={setDurationInFrames}
                   onFpsChange={setFps}
                   isCompiling={isCompiling}

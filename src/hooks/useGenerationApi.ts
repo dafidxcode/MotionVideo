@@ -68,6 +68,7 @@ interface UseGenerationApiReturn {
       voice?: string;
       voiceModel?: string;
       autoCaption?: boolean;
+      aspectRatio?: string;
       duration?: number;
       fps?: number;
     },
@@ -89,6 +90,7 @@ export function useGenerationApi(): UseGenerationApiReturn {
         voice?: string;
         voiceModel?: string;
         autoCaption?: boolean;
+        aspectRatio?: string;
         duration?: number;
         fps?: number;
       },
@@ -137,6 +139,7 @@ export function useGenerationApi(): UseGenerationApiReturn {
             voice: options?.voice,
             voiceModel: options?.voiceModel,
             autoCaption: options?.autoCaption,
+            aspectRatio: options?.aspectRatio,
             duration: options?.duration,
             fps: options?.fps,
             currentCode: isFollowUp ? currentCode : undefined,

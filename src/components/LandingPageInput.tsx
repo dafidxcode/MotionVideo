@@ -22,6 +22,10 @@ import { BANG_MOTION_STYLES } from "@/data/bangMotionStyles";
 import { EXAMPLE_PROMPTS } from "@/data/examplePrompts";
 import { cn } from "@/lib/utils";
 import {
+  ASPECT_RATIO_OPTIONS,
+  type AspectRatioId,
+} from "@/types/aspect-ratio";
+import {
   ArrowRight,
   ArrowUp,
   Check,
@@ -30,9 +34,12 @@ import {
   Globe,
   Loader2,
   Mic,
+  Monitor,
   Paperclip,
   Play,
   SlidersHorizontal,
+  Smartphone,
+  Square,
   Subtitles,
   Volume2,
   X,
@@ -72,6 +79,7 @@ interface LandingPageInputProps {
       voiceModel: VoiceEngineId;
       voice: string;
       autoCaption: boolean;
+      aspectRatio?: AspectRatioId;
       duration?: number;
       fps?: number;
     },
@@ -92,6 +100,7 @@ export function LandingPageInput({
   const voiceModel: VoiceEngineId = "auto";
   const [voice, setVoice] = useState<string>("");
   const [autoCaption, setAutoCaption] = useState<boolean>(true);
+  const [aspectRatio, setAspectRatio] = useState<AspectRatioId>("16:9");
   const [durationInFrames, setDurationInFrames] = useState<number>(300);
   const [fps] = useState<number>(30);
   const [mobileTab, setMobileTab] = useState<"prompt" | "styles">("prompt");
@@ -251,11 +260,19 @@ export function LandingPageInput({
     e.preventDefault();
     if (!prompt.trim() || !activeStyle || isNavigating) return;
 
-    // Embed visual style instructions into prompt sent to AI Agent
+    // Embed visual style & aspect ratio instructions into prompt sent to AI Agent
     // WITHOUT touching or mutating the user's typed prompt in the input textarea!
-    const finalPrompt = activeStyle
-      ? `${prompt.trim()}\n\n## VISUAL STYLE & AESTHETIC DIRECTIVE (${activeStyle.name.toUpperCase()} - ${activeStyle.category}):\n${activeStyle.prompt}`
-      : prompt.trim();
+    const aspectRatioDirective =
+      aspectRatio === "9:16"
+        ? "\n\n## TARGET ASPECT RATIO: 9:16 VERTICAL (1080x1920) (CRITICAL)\n- Design specifically for vertical mobile layout (TikTok / Reels / Shorts).\n- Composition is 1080px wide by 1920px tall. Center the main visual narrative vertically.\n- Leave comfortable margins at top and bottom for mobile UI overlays.\n- Ensure typography and elements are scaled nicely for vertical view."
+        : aspectRatio === "1:1"
+          ? "\n\n## TARGET ASPECT RATIO: 1:1 SQUARE (1080x1080) (CRITICAL)\n- Design specifically for square feed layout (Instagram / LinkedIn / Facebook).\n- Composition is 1080px wide by 1080px tall. Keep visual balance centered and impactful."
+          : "\n\n## TARGET ASPECT RATIO: 16:9 WIDESCREEN (1920x1080) (CRITICAL)\n- Design for cinematic widescreen (1920x1080). Standard desktop and YouTube presentation.";
+
+    const finalPrompt =
+      (activeStyle
+        ? `${prompt.trim()}\n\n## VISUAL STYLE & AESTHETIC DIRECTIVE (${activeStyle.name.toUpperCase()} - ${activeStyle.category}):\n${activeStyle.prompt}`
+        : prompt.trim()) + aspectRatioDirective;
 
     onNavigate(
       finalPrompt,
@@ -266,6 +283,7 @@ export function LandingPageInput({
         voiceModel,
         voice,
         autoCaption,
+        aspectRatio,
         duration: durationInFrames,
         fps,
       },
@@ -822,6 +840,61 @@ export function LandingPageInput({
                     {catalogWarningForUser}
                   </p>
                 )}
+              </div>
+
+              {/* 3. Aspect Ratio Selector (9:16, 1:1, 16:9) */}
+              <div className="flex flex-col gap-1.5">
+                <label className="text-xs font-semibold text-[#E0E0E6] flex items-center justify-between">
+                  <span className="flex items-center gap-1.5">
+                    <Monitor className="w-3.5 h-3.5 text-[#9A9AA2]" />
+                    Aspect Ratio
+                  </span>
+                  <span className="text-[10px] text-amber-400 font-mono font-medium">
+                    {aspectRatio === "9:16"
+                      ? "1080x1920"
+                      : aspectRatio === "1:1"
+                        ? "1080x1080"
+                        : "1920x1080"}
+                  </span>
+                </label>
+                <div className="grid grid-cols-3 gap-2">
+                  {ASPECT_RATIO_OPTIONS.map((opt) => {
+                    const isSelected = aspectRatio === opt.id;
+                    return (
+                      <button
+                        key={opt.id}
+                        type="button"
+                        onClick={() => setAspectRatio(opt.id)}
+                        disabled={isNavigating}
+                        className={cn(
+                          "flex flex-col items-center justify-center py-2 px-1 rounded-xl border text-xs transition-all cursor-pointer",
+                          isSelected
+                            ? "bg-amber-400/15 border-amber-400 text-amber-300 font-bold shadow-md shadow-amber-400/10"
+                            : "bg-[#1F1F23] border-[#28282C] text-[#9A9AA2] hover:bg-[#26262B] hover:text-[#F5F5F7]",
+                        )}
+                        title={opt.sublabel}
+                      >
+                        <div className="flex items-center gap-1.5 mb-0.5">
+                          {opt.id === "9:16" ? (
+                            <Smartphone className="w-3.5 h-3.5" />
+                          ) : opt.id === "1:1" ? (
+                            <Square className="w-3.5 h-3.5" />
+                          ) : (
+                            <Monitor className="w-3.5 h-3.5" />
+                          )}
+                          <span className="text-xs">{opt.id}</span>
+                        </div>
+                        <span className="text-[9px] opacity-75 truncate max-w-full">
+                          {opt.id === "9:16"
+                            ? "Vertical"
+                            : opt.id === "1:1"
+                              ? "Square"
+                              : "Landscape"}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
 
               {/* 4. Duration Selector */}

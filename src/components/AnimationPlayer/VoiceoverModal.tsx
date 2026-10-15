@@ -110,7 +110,21 @@ export function injectAudioAndCaptionsIntoCode(
     } else if (updated.includes("const DynamicAnimation")) {
       updated = updated.replace("const DynamicAnimation", `${captionsDeclaration}const DynamicAnimation`);
     } else {
-      updated = captionsDeclaration + updated;
+      const lastImportIndex = updated.lastIndexOf("import ");
+      if (lastImportIndex !== -1) {
+        const endOfLine = updated.indexOf("\n", lastImportIndex);
+        if (endOfLine !== -1) {
+          updated =
+            updated.slice(0, endOfLine + 1) +
+            "\n" +
+            captionsDeclaration +
+            updated.slice(endOfLine + 1);
+        } else {
+          updated = updated + "\n\n" + captionsDeclaration;
+        }
+      } else {
+        updated = captionsDeclaration + updated;
+      }
     }
   }
 

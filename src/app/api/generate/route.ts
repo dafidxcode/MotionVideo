@@ -312,6 +312,7 @@ interface GenerateRequest {
   voice?: string;
   voiceModel?: string;
   autoCaption?: boolean;
+  aspectRatio?: "16:9" | "9:16" | "1:1";
   duration?: number;
   fps?: number;
 }
@@ -342,6 +343,7 @@ export async function POST(req: Request) {
     voice = "",
     voiceModel = "auto",
     autoCaption = true,
+    aspectRatio = "16:9",
     duration = 300,
     fps = 30,
   }: GenerateRequest = await req.json();
@@ -540,12 +542,22 @@ export async function POST(req: Request) {
   const audioPreferenceNotice = `\n- Preferred Voiceover Voice: "${voice}" (SwdVoice${voiceModel && voiceModel !== "auto" ? `, engine: ${voiceModel}` : ""}). Auto-captions: ${autoCaption ? "enabled" : "disabled"}.\n- Ensure the VOICEOVER_SCRIPT narration aligns seamlessly with the visual sequences.`;
   languageInstruction += audioPreferenceNotice;
 
+  // Aspect Ratio Directive for the animation layout
+  let aspectRatioInstruction = "";
+  if (aspectRatio === "9:16") {
+    aspectRatioInstruction = `\n\n## TARGET ASPECT RATIO: 9:16 VERTICAL (1080x1920) (CRITICAL)\n- Canvas is 1080px wide by 1920px tall (Mobile TikTok / Reels / Shorts).\n- Center hero elements and text vertically; leave safe padding at top and bottom for phone overlays.`;
+  } else if (aspectRatio === "1:1") {
+    aspectRatioInstruction = `\n\n## TARGET ASPECT RATIO: 1:1 SQUARE (1080x1080) (CRITICAL)\n- Canvas is 1080px wide by 1080px tall (Instagram Square Feed).\n- Design balanced, symmetrical motion graphics centered in the square.`;
+  } else {
+    aspectRatioInstruction = `\n\n## TARGET ASPECT RATIO: 16:9 WIDESCREEN (1920x1080) (CRITICAL)\n- Canvas is 1920px wide by 1080px tall (Cinematic Widescreen).`;
+  }
+
   // Load skill-specific content only for NEW skills (previously used skills are already in context)
   const skillContent = getCombinedSkillContent(newSkills as SkillName[]);
   const enhancedSystemPrompt =
     (skillContent
       ? `${SYSTEM_PROMPT}\n\n## SKILL-SPECIFIC GUIDANCE\n${skillContent}`
-      : SYSTEM_PROMPT) + languageInstruction;
+      : SYSTEM_PROMPT) + languageInstruction + aspectRatioInstruction;
 
   // FOLLOW-UP MODE: Use non-streaming generateObject for faster edits
   if (isFollowUp && currentCode) {

@@ -9,6 +9,7 @@ import {
   type VoiceEngineId,
   type VoiceLanguageCode,
 } from "@/types/voice";
+import { persistAudio } from "@/lib/audio-storage";
 import { NextResponse } from "next/server";
 
 const DEFAULT_LANGUAGE: VoiceLanguageCode = "en";
@@ -45,21 +46,6 @@ function parseRequest(raw: unknown): VoiceoverRequest | string {
     withCaptions: body.withCaptions !== false,
     voice: typeof body.voice === "string" ? body.voice.trim() : "",
   };
-}
-
-async function saveToPublicFolder(bytes: ArrayBuffer): Promise<string | null> {
-  try {
-    const fs = await import("fs/promises");
-    const path = await import("path");
-    const dir = path.join(process.cwd(), "public", "voiceovers");
-    await fs.mkdir(dir, { recursive: true });
-    const filename = `vo-${Date.now()}.mp3`;
-    await fs.writeFile(path.join(dir, filename), new Uint8Array(bytes));
-    return `/voiceovers/${filename}`;
-  } catch (saveErr) {
-    console.warn("Could not save to public/voiceovers:", saveErr);
-    return null;
-  }
 }
 
 /**
@@ -143,8 +129,9 @@ export async function POST(req: Request) {
     });
 
     const audioBuffer = await downloadHeyGenAudio(synthesis.audioUrl);
-    const fileUrl = await saveToPublicFolder(audioBuffer);
-    const audioUrl = `data:audio/mp3;base64,${Buffer.from(audioBuffer).toString("base64")}`;
+    const persisted = await persistAudio(audioBuffer, "wav");
+    const reliableAudioUrl = persisted.s3Url || persisted.localUrl || synthesis.audioUrl;
+    const base64AudioUrl = `data:audio/wav;base64,${Buffer.from(audioBuffer).toString("base64")}`;
 
     let words = synthesis.words;
     let duration = synthesis.duration;
@@ -156,9 +143,10 @@ export async function POST(req: Request) {
 
     return NextResponse.json({
       provider: "heygen",
-      audioUrl,
-      fileUrl: fileUrl || audioUrl,
-      remoteAudioUrl: synthesis.audioUrl,
+      audioUrl: reliableAudioUrl,
+      fileUrl: reliableAudioUrl,
+      remoteAudioUrl: reliableAudioUrl,
+      dataUrl: base64AudioUrl,
       voice: parsed.voice,
       engine: synthesis.engine ?? parsed.engine,
       language: parsed.language,

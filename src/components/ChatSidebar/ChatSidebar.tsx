@@ -35,6 +35,7 @@ export interface ChatSidebarRef {
     voice?: string;
     voiceModel?: string;
     autoCaption?: boolean;
+    aspectRatio?: string;
     duration?: number;
     fps?: number;
   }) => void;
@@ -132,6 +133,7 @@ export const ChatSidebar = forwardRef<ChatSidebarRef, ChatSidebarProps>(
       voice?: string;
       voiceModel?: string;
       autoCaption?: boolean;
+      aspectRatio?: string;
       duration?: number;
       fps?: number;
     }) => {

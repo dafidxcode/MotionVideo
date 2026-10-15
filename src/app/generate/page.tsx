@@ -272,7 +272,8 @@ function GeneratePageContent() {
       saveProjectState(generatedCode);
 
       // Automatically synthesize the HeyGen voiceover and captions on first generation
-      if (!autoVoiceoverAppliedRef.current && initialVoice) {
+      const effectiveVoice = initialVoice || "f5d7ba1dfec24c32bc3c372e210d41ed";
+      if (!autoVoiceoverAppliedRef.current) {
         autoVoiceoverAppliedRef.current = true;
         const script = extractScriptFromCode(generatedCode) || initialPrompt;
         if (script && !/<Audio\s+[^>]*\/>/.test(generatedCode)) {

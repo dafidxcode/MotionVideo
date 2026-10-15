@@ -1,10 +1,5 @@
 import React, { useEffect, useState } from "react";
-import {
-  AbsoluteFill,
-  continueRender,
-  delayRender,
-  getInputProps,
-} from "remotion";
+import { AbsoluteFill, getInputProps } from "remotion";
 import { compileCode } from "./compiler";
 
 interface DynamicCompProps {
@@ -15,25 +10,25 @@ interface DynamicCompProps {
 export const DynamicComp: React.FC = () => {
   const { code } = getInputProps() as DynamicCompProps;
 
-  const [handle] = useState(() => delayRender("Compiling code..."));
-  const [Component, setComponent] = useState<React.ComponentType | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const initial = React.useMemo(() => {
+    try {
+      return compileCode(code);
+    } catch (e) {
+      return { Component: null, error: e instanceof Error ? e.message : "Unknown error" };
+    }
+  }, [code]);
+
+  const [Component, setComponent] = useState<React.ComponentType | null>(
+    () => initial.Component,
+  );
+  const [error, setError] = useState<string | null>(() => initial.error);
 
   useEffect(() => {
-    try {
-      const result = compileCode(code);
-
-      if (result.error) {
-        setError(result.error);
-      } else {
-        setComponent(() => result.Component);
-      }
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Unknown error");
-    } finally {
-      continueRender(handle);
+    if (initial.Component !== Component) {
+      setComponent(() => initial.Component);
+      setError(initial.error);
     }
-  }, [code, handle]);
+  }, [initial]);
 
   if (error) {
     return (

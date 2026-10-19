@@ -532,8 +532,8 @@ const currentFps = fps || 30;
 const durationSeconds = Math.max(10, Math.round(durationFrames / currentFps));
 const motionSettings = await getMotionStudioSettings();
 // initialGenerationCost is the admin-configurable rate per 10 seconds
-// (default 2 => 10s = 2, 20s = 4, 30s = 6, 60s = 12, 120s = 24).
-const ratePer10s = Number(motionSettings.initialGenerationCost) || 2;
+// (default 6 => 10s = 6, 20s = 12, 30s = 18, 60s = 36, 120s = 72).
+const ratePer10s = Number(motionSettings.initialGenerationCost) || 6;
 const calculatedStep1Credits = Math.max(
   ratePer10s,
   Math.round((durationSeconds / 10) * ratePer10s),

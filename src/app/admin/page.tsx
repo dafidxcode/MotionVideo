@@ -122,9 +122,9 @@ export default function AdminPage() {
   // Admin Data States
   const [stats, setStats] = useState<AdminStats | null>(null);
   const [settings, setSettings] = useState<AdminSettings>({
-    initialGenerationCost: 2,
-    chatbotCost: 1,
-    renderCost: 10,
+    initialGenerationCost: 6,
+    chatbotCost: 3,
+    renderCost: 30,
     developerFeePercent: 50,
   });
   const [activities, setActivities] = useState<ActivityItem[]>([]);
@@ -144,9 +144,9 @@ export default function AdminPage() {
   const [userSearch, setUserSearch] = useState("");
 
   // Edit Settings Form State
-  const [formInitialGenCost, setFormInitialGenCost] = useState("2");
-  const [formChatbotCost, setFormChatbotCost] = useState("1");
-  const [formRenderCost, setFormRenderCost] = useState("10");
+  const [formInitialGenCost, setFormInitialGenCost] = useState("6");
+  const [formChatbotCost, setFormChatbotCost] = useState("3");
+  const [formRenderCost, setFormRenderCost] = useState("30");
   const [formDevFeePercent, setFormDevFeePercent] = useState("50");
   const isFormDirtyRef = useRef(false);
 
@@ -177,9 +177,9 @@ export default function AdminPage() {
           setSettings(data.settings);
           // BUG-40: Do not overwrite pricing inputs while admin is actively editing
           if (!isFormDirtyRef.current) {
-            setFormInitialGenCost(String(data.settings.initialGenerationCost ?? 2));
-            setFormChatbotCost(String(data.settings.chatbotCost ?? 1));
-            setFormRenderCost(String(data.settings.renderCost ?? 10));
+            setFormInitialGenCost(String(data.settings.initialGenerationCost ?? 6));
+            setFormChatbotCost(String(data.settings.chatbotCost ?? 3));
+            setFormRenderCost(String(data.settings.renderCost ?? 30));
             setFormDevFeePercent(
               String(data.settings.developerFeePercent ?? 50),
             );

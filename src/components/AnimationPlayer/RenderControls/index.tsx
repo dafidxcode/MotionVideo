@@ -37,6 +37,19 @@ export const RenderControls: React.FC<{
   height = 1080,
 }) => {
     const [showConfirm, setShowConfirm] = useState(false);
+    const [renderCost, setRenderCost] = useState<number>(30);
+
+    useEffect(() => {
+      fetch("/api/config")
+        .then((res) => (res.ok ? res.json() : null))
+        .then((data) => {
+          if (typeof data?.pricing?.renderCost === "number" && data.pricing.renderCost > 0) {
+            setRenderCost(data.pricing.renderCost);
+          }
+        })
+        .catch(() => {});
+    }, []);
+
     const { renderMedia, state, undo } = useRendering(
       {
         code,
@@ -128,9 +141,9 @@ export const RenderControls: React.FC<{
           <Dialog open={showConfirm} onOpenChange={setShowConfirm}>
             <DialogContent className="sm:max-w-[420px] bg-[#18181B] border-[#28282C] text-[#F5F5F7]">
               <DialogHeader>
-                <DialogTitle className="text-base font-bold text-white">Confirm Render (10 Credits)</DialogTitle>
+                <DialogTitle className="text-base font-bold text-white">Confirm Render ({renderCost} Credits)</DialogTitle>
                 <DialogDescription className="text-xs text-[#9A9AA2] mt-2 leading-relaxed">
-                  Rendering this animation will deduct <strong className="text-amber-400">10 credits</strong> from your account balance. Your video will be compiled at {width}x{height} on AWS Lambda.
+                  Rendering this animation will deduct <strong className="text-amber-400">{renderCost} credits</strong> from your account balance. Your video will be compiled at {width}x{height} on AWS Lambda.
                 </DialogDescription>
               </DialogHeader>
               <DialogFooter className="mt-4 flex gap-2 justify-end">

@@ -71,8 +71,8 @@ export const BASE_DURATION_CONFIGS = [
   { value: "3600", label: "2 minutes", seconds: 120 },
 ];
 
-export function getDurationOptions(ratePer10s: number = 2) {
-  const safeRate = Number.isFinite(ratePer10s) && ratePer10s > 0 ? ratePer10s : 2;
+export function getDurationOptions(ratePer10s: number = 6) {
+  const safeRate = Number.isFinite(ratePer10s) && ratePer10s > 0 ? ratePer10s : 6;
   return BASE_DURATION_CONFIGS.map((d) => ({
     ...d,
     credits: Math.max(safeRate, Math.round((d.seconds / 10) * safeRate)),
@@ -80,7 +80,7 @@ export function getDurationOptions(ratePer10s: number = 2) {
 }
 
 // BUG-10: Default DURATION_OPTIONS computed dynamically from default rate
-export const DURATION_OPTIONS = getDurationOptions(2);
+export const DURATION_OPTIONS = getDurationOptions(6);
 
 interface LandingPageInputProps {
   onNavigate: (
@@ -133,7 +133,7 @@ export function LandingPageInput({
   const currentLang =
     LANGUAGE_OPTIONS.find((l) => l.id === language) || LANGUAGE_OPTIONS[0];
 
-  const [ratePer10s, setRatePer10s] = useState<number>(2);
+  const [ratePer10s, setRatePer10s] = useState<number>(6);
 
   // BUG-10: Synchronize duration credit costs dynamically from server settings
   useEffect(() => {

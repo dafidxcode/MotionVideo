@@ -7,9 +7,9 @@ import {
 } from "./auth";
 
 export interface MotionStudioSettings {
-  initialGenerationCost: number; // default: 5
-  chatbotCost: number; // default: 1
-  renderCost: number; // default: 10
+  initialGenerationCost: number; // default: 6
+  chatbotCost: number; // default: 3
+  renderCost: number; // default: 30
   developerFeePercent: number; // default: 50%
   updatedAt?: string;
   updatedBy?: string;
@@ -30,9 +30,9 @@ export interface MotionStudioActivity {
 }
 
 const DEFAULT_SETTINGS: MotionStudioSettings = {
-  initialGenerationCost: 2, // 2 Credits per 10 seconds (e.g. 10s = 2, 20s = 4, 30s = 6, 60s/1m = 12, 120s/2m = 24)
-  chatbotCost: 1,
-  renderCost: 10,
+  initialGenerationCost: 6, // 6 Credits per 10 seconds (e.g. 10s = 6, 20s = 12, 30s = 18, 60s/1m = 36, 120s/2m = 72)
+  chatbotCost: 3,
+  renderCost: 30,
   developerFeePercent: 50,
   updatedAt: new Date().toISOString(),
   updatedBy: "System",
@@ -317,12 +317,18 @@ async function chargeUserCreditsLocked(
     cost = overrideAmount;
   } else if (action === "initial_generation") {
     const durationSeconds = Number(metadata?.durationSeconds) || 10;
-    const baseRate = settings.initialGenerationCost || 2;
+    const baseRate = typeof settings.initialGenerationCost === "number" && settings.initialGenerationCost > 0
+      ? settings.initialGenerationCost
+      : 6;
     cost = Math.max(baseRate, Math.round((durationSeconds / 10) * baseRate));
   } else if (action === "chatbot_llm") {
-    cost = settings.chatbotCost;
+    cost = typeof settings.chatbotCost === "number" && settings.chatbotCost >= 0
+      ? settings.chatbotCost
+      : 3;
   } else if (action === "aws_render") {
-    cost = settings.renderCost;
+    cost = typeof settings.renderCost === "number" && settings.renderCost >= 0
+      ? settings.renderCost
+      : 30;
   }
 
   // Fetch real-time profile from Supabase

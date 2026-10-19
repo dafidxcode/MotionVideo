@@ -187,8 +187,11 @@ return __RootDynamicComponent;`;
     );
 
     const SafeAudio = React.forwardRef((props: any, ref: any) => {
+      const isRemote =
+        typeof props.src === "string" &&
+        (props.src.startsWith("http://") || props.src.startsWith("https://"));
       return React.createElement(Audio, {
-        crossOrigin: "anonymous",
+        ...(isRemote ? { crossOrigin: "anonymous" } : {}),
         volume: 1,
         ...props,
         ref,

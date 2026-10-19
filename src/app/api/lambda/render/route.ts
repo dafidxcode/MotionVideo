@@ -98,13 +98,14 @@ export const POST = executeApi<RenderMediaOnLambdaOutput, typeof RenderRequest>(
         .replace(/[^a-zA-Z0-9_-]/g, "");
       const uniqueFileName = `swdbot-motion-${sanitizedUser}-${Date.now()}.mp4`;
 
-      // Ensure any relative audio URLs are expanded to full HTTPS URL so Lambda can load them
+      // Ensure any relative audio URLs are expanded to direct S3 pre-signed URLs (or HTTPS baseUrl) so Lambda Chrome loads them reliably
       const processedInputProps = { ...body.inputProps };
-      if (processedInputProps.code && processedInputProps.code.includes('src="/api/audio/')) {
+      if (processedInputProps.code) {
+        const { prepareCodeForLambda } = await import("@/lib/audio-storage");
         const baseUrl = process.env.NEXT_PUBLIC_APP_URL || "https://swdbot.tech";
-        processedInputProps.code = processedInputProps.code.replace(
-          /src="\/api\/audio\//g,
-          `src="${baseUrl}/api/audio/`,
+        processedInputProps.code = await prepareCodeForLambda(
+          processedInputProps.code,
+          baseUrl,
         );
       }
 

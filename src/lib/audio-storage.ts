@@ -117,3 +117,55 @@ export async function persistAudio(
     filename,
   };
 }
+
+export async function getPresignedAudioUrl(filename: string): Promise<string | null> {
+  try {
+    const s3 = getS3Client();
+    if (!s3) return null;
+    const s3Key = `voiceovers/${filename}`;
+    const url = await getSignedUrl(
+      s3,
+      new GetObjectCommand({
+        Bucket: BUCKET_NAME,
+        Key: s3Key,
+      }),
+      { expiresIn: 86400 }, // 24 hours
+    );
+    return url;
+  } catch (err) {
+    console.warn(`[SWDBOT RUNTIME] Failed to generate presigned audio URL for ${filename}:`, err);
+    return null;
+  }
+}
+
+export async function prepareCodeForLambda(code: string, baseUrl: string): Promise<string> {
+  if (!code) return code;
+
+  // Match both single and double quotes, and relative URLs: /api/audio/<filename> or /voiceovers/<filename>
+  const audioRegex = /(src\s*=\s*['"])(?:\/api\/audio\/|\/voiceovers\/)([^'"?#\s]+)(['"])/g;
+
+  const matches: Array<{ fullMatch: string; prefix: string; filename: string; suffix: string }> = [];
+  let match: RegExpExecArray | null;
+  while ((match = audioRegex.exec(code)) !== null) {
+    matches.push({
+      fullMatch: match[0],
+      prefix: match[1],
+      filename: match[2],
+      suffix: match[3],
+    });
+  }
+
+  if (matches.length === 0) return code;
+
+  let updatedCode = code;
+  for (const item of matches) {
+    // Try direct S3 presigned URL first to completely bypass Cloudflare / reverse proxy blocks on Lambda
+    const s3Presigned = await getPresignedAudioUrl(item.filename);
+    const resolvedUrl = s3Presigned || `${baseUrl}/api/audio/${item.filename}`;
+
+    updatedCode = updatedCode.replace(item.fullMatch, `${item.prefix}${resolvedUrl}${item.suffix}`);
+  }
+
+  return updatedCode;
+}
+

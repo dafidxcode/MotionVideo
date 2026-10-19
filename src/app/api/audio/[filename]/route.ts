@@ -3,15 +3,27 @@ import path from "path";
 import { NextRequest, NextResponse } from "next/server";
 import { parseHttpRange } from "@/lib/http-range";
 
-// In-memory cache for ultra-fast audio streaming
-const audioMemoryCache = new Map<string, { buffer: Buffer; contentType: string }>();
+// In-memory cache singleton across route module boundaries
+const GLOBAL_AUDIO_CACHE_KEY = "__swdbot_audio_cache_singleton__";
+
+function getAudioCache(): Map<string, { buffer: Buffer; contentType: string }> {
+  const g = globalThis as unknown as Record<
+    string,
+    Map<string, { buffer: Buffer; contentType: string }> | undefined
+  >;
+  if (!g[GLOBAL_AUDIO_CACHE_KEY]) {
+    g[GLOBAL_AUDIO_CACHE_KEY] = new Map();
+  }
+  return g[GLOBAL_AUDIO_CACHE_KEY];
+}
 
 export function storeAudioInMemory(filename: string, buffer: Buffer, contentType = "audio/wav") {
-  audioMemoryCache.set(filename, { buffer, contentType });
+  const cache = getAudioCache();
+  cache.set(filename, { buffer, contentType });
   // Keep cache bounded to 100 recent items
-  if (audioMemoryCache.size > 100) {
-    const oldestKey = audioMemoryCache.keys().next().value;
-    if (oldestKey) audioMemoryCache.delete(oldestKey);
+  if (cache.size > 100) {
+    const oldestKey = cache.keys().next().value;
+    if (oldestKey) cache.delete(oldestKey);
   }
 }
 
@@ -25,8 +37,9 @@ export async function GET(
   let audioBuffer: Buffer | null = null;
   let contentType = sanitized.endsWith(".mp3") ? "audio/mpeg" : "audio/wav";
 
-  // 1. Check in-memory cache first
-  const cached = audioMemoryCache.get(sanitized);
+  // 1. Check global in-memory cache first
+  const cache = getAudioCache();
+  const cached = cache.get(sanitized);
   if (cached) {
     audioBuffer = cached.buffer;
     contentType = cached.contentType;
@@ -42,6 +55,43 @@ export async function GET(
         audioBuffer = await fs.readFile(tmpPath);
       } catch {
         audioBuffer = null;
+      }
+    }
+
+    // 4. Fallback to AWS S3 bucket if not found in local memory or disk
+    if (!audioBuffer) {
+      const accessKeyId =
+        process.env.REMOTION_AWS_ACCESS_KEY_ID || process.env.AWS_ACCESS_KEY_ID;
+      const secretAccessKey =
+        process.env.REMOTION_AWS_SECRET_ACCESS_KEY || process.env.AWS_SECRET_ACCESS_KEY;
+
+      if (accessKeyId && secretAccessKey) {
+        try {
+          const { S3Client, GetObjectCommand } = await import("@aws-sdk/client-s3");
+          const s3 = new S3Client({
+            region: process.env.REMOTION_AWS_REGION || "ap-southeast-2",
+            credentials: {
+              accessKeyId: accessKeyId.trim(),
+              secretAccessKey: secretAccessKey.trim(),
+            },
+          });
+          const bucket =
+            process.env.REMOTION_AWS_BUCKET || "remotionlambda-apsoutheast2-i62f0ewt1m";
+          const res = await s3.send(
+            new GetObjectCommand({
+              Bucket: bucket,
+              Key: `voiceovers/${sanitized}`,
+            }),
+          );
+          if (res.Body) {
+            const byteArray = await res.Body.transformToByteArray();
+            audioBuffer = Buffer.from(byteArray);
+            // Save to memory cache for subsequent range requests
+            cache.set(sanitized, { buffer: audioBuffer, contentType });
+          }
+        } catch {
+          audioBuffer = null;
+        }
       }
     }
   }

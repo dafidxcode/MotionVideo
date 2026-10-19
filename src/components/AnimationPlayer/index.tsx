@@ -181,7 +181,7 @@ export const AnimationPlayer: React.FC<AnimationPlayerProps> = ({
             showVolumeControls={true}
             initiallyMuted={false}
             initialVolume={1}
-            numberOfSharedAudioTags={0}
+            numberOfSharedAudioTags={5}
           />
         </div>
 

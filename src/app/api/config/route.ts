@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { getMotionStudioSettings } from "@/lib/credits";
 
 export async function GET() {
   const googleClientId =
@@ -11,8 +12,23 @@ export async function GET() {
     process.env.VITE_CLOUDFLARE_TURNSTILE_SITEKEY ||
     "";
 
-  return NextResponse.json({
-    googleClientId,
-    turnstileSitekey,
-  });
+  // BUG-10: Single source of truth for pricing so landing page and forms stay synchronized
+  const settings = await getMotionStudioSettings();
+
+  return NextResponse.json(
+    {
+      googleClientId,
+      turnstileSitekey,
+      pricing: {
+        initialGenerationCost: settings.initialGenerationCost,
+        chatbotCost: settings.chatbotCost,
+        renderCost: settings.renderCost,
+      },
+    },
+    {
+      headers: {
+        "Cache-Control": "public, max-age=300, stale-while-revalidate=60",
+      },
+    },
+  );
 }

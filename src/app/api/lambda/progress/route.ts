@@ -6,10 +6,21 @@ import {
 import { DISK, RAM, REGION, TIMEOUT } from "../../../../../config.mjs";
 import { ProgressRequest, ProgressResponse } from "../../../../../types/schema";
 import { executeApi } from "../../../../helpers/api-response";
+import { requireActiveUser } from "../../../../lib/auth";
 
 export const POST = executeApi<ProgressResponse, typeof ProgressRequest>(
   ProgressRequest,
   async (req, body) => {
+    // BUG-03: render progress was readable (and downloadable) by anyone who
+    // knew a bucketName + renderId. Require an active session.
+    const guard = await requireActiveUser(req);
+    if (!guard.ok || !guard.email) {
+      throw new Error(
+        guard.error || "Authentication required. Please sign in again.",
+      );
+    }
+    const userEmail = guard.email;
+
     const renderProgress = await getRenderProgress({
       bucketName: body.bucketName,
       functionName: speculateFunctionName({
@@ -30,31 +41,23 @@ export const POST = executeApi<ProgressResponse, typeof ProgressRequest>(
 
     if (renderProgress.done) {
       const rawUrl = renderProgress.outputFile as string;
+      // BUG-23: Include an unguessable UUID token so rendered video URLs cannot be enumerated
+      const randomToken = crypto.randomUUID().replace(/-/g, "").slice(0, 16);
       const { saveMediaToLocal } = await import("@/lib/localMediaStorage");
-      const localUrl = await saveMediaToLocal(
-        rawUrl,
-        `render_${body.projectId || body.id}.mp4`
-      );
+      const secureFileName = `render_${(body.projectId || body.id).replace(/[^a-zA-Z0-9_-]/g, "")}_${randomToken}.mp4`;
+      const localUrl = await saveMediaToLocal(rawUrl, secureFileName);
 
-      const cookieHeader = req.headers.get("cookie") || "";
-      let token = "";
-      const match = cookieHeader.match(/swdbot_session=([^;]+)/);
-      if (match) token = match[1];
-      if (token && body.projectId) {
-        const { verifySessionToken } = await import("@/lib/auth");
-        const verified = verifySessionToken(token);
-        if (verified.valid && verified.email) {
-          const { saveUserProject } = await import("@/lib/projects");
-          saveUserProject({
-            id: body.projectId,
-            userEmail: verified.email,
-            code: "",
-            prompt: "",
-            renderStatus: "completed",
-            renderUrl: localUrl,
-            renderSize: renderProgress.outputSizeInBytes as number,
-          }).catch(() => {});
-        }
+      if (body.projectId) {
+        // BUG-11: use updatePartialProject to update render metadata without
+        // wiping out code and prompt with empty strings.
+        const { updatePartialProject } = await import("@/lib/projects");
+        await updatePartialProject(userEmail, body.projectId, {
+          renderStatus: "completed",
+          renderUrl: localUrl,
+          renderSize: renderProgress.outputSizeInBytes as number,
+        }).catch((err) => {
+          console.warn("[Progress] Failed to update project render status:", err);
+        });
       }
 
       return {

@@ -1,0 +1,1181 @@
+================================================================================
+DAFTAR FIX BUGS — SWDBOT MOTION STUDIO
+Audit: UI/UX Frontend, Workflow Backend, Auth, Billing, Data, Build/Tooling
+Tanggal audit: 17 Oktober 2026
+================================================================================
+
+VERIFIKASI YANG DIJALANKAN
+--------------------------------------------------------------------------------
+- npx tsc --noEmit            -> LULUS (0 type error)
+- npx eslint .                -> GAGAL (72 error, 5 warning)
+- git check-ignore data       -> kosong (data/ tidak di-ignore)
+- PoC forged session token    -> BERHASIL DITERIMA (fallback secret aktif)
+- Grep pemakaian komponen    -> VoiceoverModal & SettingsModal tidak pernah dirender
+
+LEBIH BANYAK FILE ADA DI src/ (yang tidak ter-cover di audit ini):
+src/skills/*, src/examples/code/*, src/components/ui/*,
+src/app/code-examples/page.tsx, src/lib/zip.ts, src/lib/single-html.ts
+
+
+================================================================================
+RINGKASAN
+================================================================================
+Total temuan        : 66
+  KRITIS           : 10
+  TINGGI           : 14
+  FRONTEND/UI-UX   : 22
+  TOOLING/INFRA    :  8
+  Ringkasan berisi data akurasi / konsistensi tambahan di bagian akhir.
+
+
+================================================================================
+BAGIAN 1 — KRITIS (Auth, Billing, Cost)
+================================================================================
+
+[BUG-01] SESSION TOKEN BISA DIPALSUKAN — FULL ADMIN TAKEOVER
+Severity : KRITIS
+Lokasi   : src/lib/auth.ts:60-62 dan src/lib/auth.ts:294-303
+Deskripsi: verifySessionToken() selalu mencoba HMAC dengan fallback secret yang
+           hardcode di dalam source code:
+             "swdbot-motion-studio-secret-auth-session-key-2026"
+           Secret ini juga ada di git history. Siapa pun bisa membuat cookie
+           swdbot_session sendiri dengan payload:
+             { key, email: "<email admin>", isAdmin: true, exp: Date.now()+7d }
+           Semua route admin hanya memverifikasi verifySessionToken() +
+           isAdminUser() -> akses penuh: /admin, ubah pricing, blokir user,
+           top-up kuota, baca aktivitas semua user.
+Bukti    : Sudah diverifikasi dengan PoC. Token buatan HMAC fallback diterima
+           oleh algoritma verifikasi yang sama.
+Fix      : 1) Hapus cabang fallback sepenuhnya (auth.ts:294-303)
+           2) SESSION_SECRET wajib dari env, TANPA default value
+           3) Ganti perbandingan string dengan crypto.timingSafeEqual
+           4) Rotasi secret setelah deploy, paksa logout semua sesi lama
+
+--------------------------------------------------------------------------------
+[BUG-02] AUTENTIKASI LEWAT HEADER x-user-api-key (CREDENTIAL LEAK)
+Severity : KRITIS
+Lokasi   : src/app/api/auth/me/route.ts:37-75
+           src/lib/auth-context.tsx:57-59 dan :121
+           src/app/api/auth/google/route.ts (response body "key")
+Deskripsi: /api/auth/me menerima header x-user-api-key / x-api-key, lalu mencari
+           profile berdasarkan legacy_key — tanpa cookie, tanpa password.
+           legacy_key yang sama persis merupakan isi/inti session token.
+           Nilai ini dikirim di body response login DAN disimpan di localStorage
+           browser. Satu XSS atau kebocoran = akses penuh 7 hari tanpa perlu
+           knows password/captcha.
+Fix      : 1) Hapus jalur fallback legacy_key dari /api/auth/me
+           2) Jika functionality mobile dibutuhkan, gunakan token khusus yang
+              di-revoke dan berbeda dari session
+           3) Jangan kirim "key"/legacy_key ke client sama sekali
+
+--------------------------------------------------------------------------------
+[BUG-03] ENDPOINT BIAYA TANPA AUTH & TANPA RATE LIMIT
+Severity : KRITIS
+Lokasi   : src/app/api/voiceover/route.ts:88-160   (TTS HeyGen gratis untuk siapa pun)
+           src/app/api/transcribe/route.ts:3        (OpenAI Whisper gratis, tanpa auth)
+           src/app/api/generate/route.ts:366-377    (guest = LLM Opus gratis)
+           src/app/api/lambda/render/route.ts:33-48 (render tanpa verifikasi user)
+           src/app/api/lambda/progress/route.ts     (progress tanpa verifikasi user)
+           src/app/api/audio/[filename]/route.ts    (tanpa ownership check)
+           src/app/api/media/[filename]/route.ts    (tanpa ownership check)
+Catatan  : src/lib/auth.ts:88-99 -> userEmail hanya ditulis ke log, tidak pernah
+           di-charge. Tidak ada middleware.ts sama sekali di repo (proteksi route
+           nol).
+Fix      : 1) Tambahkan src/middleware.ts untuk mewajibkan session pada
+           /api/generate, /api/voiceover, /api/transcribe, /api/lambda/*
+           2) Tambahkan rate limit per user + per IP (mis.Upstash/Redis)
+           3) /api/transcribe: batasi ukuran body, batasi durasi audio
+           4) /api/media & /api/audio: verifikasi kepemilikan render
+
+--------------------------------------------------------------------------------
+[BUG-04] TURNSTILE BISA DIMATIKAN TOTAL (FAIL-OPEN)
+Severity : KRITIS
+Lokasi   : src/lib/auth.ts:70-71
+           src/app/api/auth/google/route.ts (turnstileToken tidak diwajibkan)
+Deskripsi: verifyTurnstileToken() return { ok: true } bila
+           CLOUDFLARE_TURNSTILE_SECRET_KEY kosong. Satu env yang hilang/typo =
+           auth terbuka penuh untuk brute-force token Google.
+Fix      : 1) Fail-closed di production: secret kosong -> return { ok:false }
+           2) Wajibkan turnstileToken di body /api/auth/google
+           3) Tambahkan startup check: production tanpa secret = abort
+
+--------------------------------------------------------------------------------
+[BUG-05] AUDIENCE CHECK GOOGLE OPSIONAL
+Severity : KRITIS
+Lokasi   : src/lib/auth.ts:135-144
+Deskripsi: "if (expectedClientId && payload.aud && ...)" — bila GOOGLE_CLIENT_ID
+           kosong, id_token yang diterbitkan untuk APLIKASI GOOGLE LAINpun
+           diterima. Google One Tap credential milik app lain = login.
+Fix      : 1) Wajibkan GOOGLE_CLIENT_ID di production (fail-closed)
+           2) Cek aud & iss tanpa kondisi truthy
+           3) Verifikasi juga "email_verified" sudah benar (sudah ada, ok)
+
+--------------------------------------------------------------------------------
+[BUG-06] USER DIBLOKIR / VIP EXPIRED TETAP BISA GENERATE & RENDER
+Severity : KRITIS
+Lokasi   : src/app/api/generate/route.ts:366-417
+           src/app/api/lambda/render/route.ts:33-64
+           (bandingkan src/app/api/auth/me/route.ts yang memanggil
+            getSwdbotProfileByEmail + validateVipMembership)
+Deskripsi: Route generate/render hanya memverifikasi tanda tangan token.
+           Tidak pernah cek is_blocked atau vip_expires_at di Supabase.
+           Efek: user yang di-block admin, atau VIP yang kadaluarsa, tetap bisa
+           generate/render selama cookie 7 hari masih hidup.
+Fix      : Buat helper requireActiveUser(email) yang memanggil
+           getSwdbotProfileByEmail() + validateVipMembership() + cek is_blocked,
+           lalu gunakan di SEMUA route yang Conservancy biaya.
+
+--------------------------------------------------------------------------------
+[BUG-07] KREDIT HILANG WALAU REQUEST GAGAL (TANPA REFUND)
+Severity : KRITIS
+Lokasi   : src/app/api/generate/route.ts:375-417 (charge)
+           vs :463-494 (validasi) vs :823-838 (error LLM)
+           src/hooks/useAutoCorrection.ts (retry 3x)
+Deskripsi: chargeUserCredits() dipanggil SEBELUM validasi prompt dan SEBELUM
+           panggilan LLM. Tidak ada refund di jalur mana pun.
+           Dampak:
+             - Prompt tidak valid (HTTP 400)  -> user tetap kena 2-24 kredit
+             - edit_failed (ambiguous match)  -> user tetap kena 1-24 kredit
+             - Error LLM / 500                 -> user tetap kena 1-24 kredit
+             - Auto-correction retry 3x        -> +1 kredit per percobaan,
+               TANPA sepengetahuan user (src/hooks/useAutoCorrection.ts)
+Fix      : 1) Validasi prompt dulu, baru charge
+           2) Wrapped generation: try success -> charge; catch -> refund penuh
+           3) Tambah status "refunded" pada MotionStudioActivity
+           4) Batasi auto-correction: maksimal 1 retry, tampilkan ke user
+              ("AI mencoba memperbaiki sendiri, menggunakan 1 kredit")
+
+--------------------------------------------------------------------------------
+[BUG-08] KREDIT RENDER DITAHAN SEBELUM RENDER BERJALAN
+Severity : KRITIS
+Lokasi   : src/app/api/lambda/render/route.ts:45-64
+Deskripsi: Urutan: charge 10 kredit -> cek AWS key (throw) -> renderMediaOnLambda
+           (bisa gagal). Semua kegagalan = user kehilangan 10 kredit tanpa
+           refund. Tidak ada refundCredits() di repo.
+Fix      : 1) Cek credential AWS DULU sebelum charge
+           2) Charge setelah renderMediaOnLambda() return renderId
+           3) Implementasikan refundCredits() untuk kasus gagal
+
+--------------------------------------------------------------------------------
+[BUG-09] RACE CONDITION DOUBLE-SPEND PADA KUOTA
+Severity : KRITIS
+Lokasi   : src/lib/credits.ts:290-350 (chargeUserCredits)
+Deskripsi: Pola baca-quota -> PATCH, tidak atomik dan tidak ada idempotency key.
+           Dua request paralel (double-click tombol, dua tab, atau request
+           paralel dari render+generate) sama-sama membaca kuota X lalu sama-
+           sama menulis X-cost. User dapat 2 layanan dengan 1 pembayaran.
+Fix      : 1) Pindahkan pengurangan ke PostgreSQL RPC atomik, contoh:
+             update profiles set quota = quota - $1 where id = $2
+             and quota >= $1 returning quota
+           2) Tambahkan idempotency key per request generate/render
+           3)visory: minimal sprinkle mutex in-process (Map<email, Promise>)
+
+--------------------------------------------------------------------------------
+[BUG-10] HARGA DI ADMIN PANEL TIDAK BERLAKU
+Severity : KRITIS
+Lokasi   : src/app/api/generate/route.ts:381  (const ratePer10s = 2)
+           src/app/api/generate/route.ts:387-402 (overrideAmount dikirim)
+           src/components/LandingPageInput.tsx:64-70 (kredits hardcode)
+           src/app/admin/page.tsx:826-885 (form "Credits / 10s")
+Deskripsi: Setting initialGenerationCost dari Admin Panel TIDAK PERNAH dipakai
+           karena route generate meng-hardcode ratePer10s = 2 dan mengirim
+           overrideAmount (yang menang atas settings di credits.ts:266-271).
+           Admin mengubah "Credits / 10s" dari 2 ke 5 = tidak ada efek sama
+           sekali, tapi UI administer admin menampilkan "berhasil diperbarui".
+           Landing page juga hardcode 2/4/6/12/24 sehingga tidak bisaSinkron.
+Fix      : 1) Hapus ratePer10s & overrideAmount dari route generate
+           2) Biarkan chargeUserCredits() memakai settings.initialGenerationCost
+           3) Ambil label kredit dari API settings (single source of truth),
+           jangan hardcode di DURATION_OPTIONS
+
+
+================================================================================
+BAGIAN 2 — TINGGI (Workflow Backend & Data)
+================================================================================
+
+[BUG-11] /api/lambda/progress MENIMPA ISI PROYEK JADI STRING KOSONG
+Severity : TINGGI
+Lokasi   : src/app/api/lambda/progress/route.ts:44-56
+           src/lib/projects.ts:207-215 (semua field pakai operator ??)
+Deskripsi: Setelah render sukses, route memanggil:
+             saveUserProject({ id, userEmail, code: "", prompt: "",
+                               renderStatus: "completed", renderUrl, renderSize })
+           Karena "" bukan nullish, operator ?? TIDAK mengambil nilai lama:
+             - code proyek   -> ""
+             - prompt proyek -> ""
+             - title         -> "Motion Graphics Project"
+           Render yang sukses justru MENGHANCURKAN proyek. Selain itu, body
+           WAJIB menyertakan userEmail + code + prompt, jadi bila projectId
+           tidak dikenal, saveUserProject akan MEMBUAT proyek baru dengan
+           code kosong (sampah di history user).
+Fix      : 1) Tambahkan updatePartialProject(userEmail, projectId, patch)
+           2) Route progress hanya patch: renderStatus, renderUrl, renderSize
+           3) Guard: hanya update bila proyek dengan id itu milik user
+
+--------------------------------------------------------------------------------
+[BUG-12] DATA PROYEK TIDAK PERNAH TERBACA DARI SUPABASE (FALLBACK KE FILE LOKAL)
+Severity : TINGGI
+Lokasi   : src/lib/projects.ts:80-96   (baca)
+           src/lib/projects.ts:127-141 (tulis list)
+           src/lib/projects.ts:236-251 (tulis item)
+           src/lib/credits.ts:74-94 & 133-146 & 172-177 & 229-240 (pola sama)
+Deskripsi: Simpan : key = `user_projects_${encodeURIComponent(email)}`
+                            -> tersimpan sbg "user_projects_user%40mail.com"
+           Baca   : ?key=eq.user_projects_user%40mail.com
+                      -> PostgREST URL-decode -> "user_projects_user@mail.com"
+                      -> TIDAK COCOK dengan data yang tersimpan
+           Akibatnya Supabase selalu miss dan SELALU jatuh ke file lokal
+           src/data/motion_projects.json. Data hilang saat restart/redeploy,
+           hilang di multi-replica Coolify, dan tidak konsisten antar instance.
+           Pola yang sama dipakai untuk motion_activities dan motion_settings.
+Fix      : 1) Jangan encode dua kali. Gunakan key tanpa "@" (mis. ganti "@"
+              jadi "__at__") atau pakai PostgREST .in.() dengan quoting benar
+           2) Tambahkan test: tulis -> baca -> bandingkan payload
+           3) Hapus file JSON sebagai source of truth (dist化をsingle writer)
+
+--------------------------------------------------------------------------------
+[BUG-13] WRITE KE SUPABASE FIRE-AND-FORGET (DATA HILANG)
+Severity : TINGGI
+Lokasi   : src/lib/projects.ts:128-141   (tidak await fetch)
+           src/lib/projects.ts:237-251   (tidak await fetch)
+           src/lib/credits.ts:227-241     (tidak await fetch)
+           src/lib/projects.ts:277-291   (await, tapi .catch(() => {}))
+Deskripsi: fetch(...) tanpa await + .catch(()=>{}). Di Next.js/serverless,
+           request bisa selesai sebelum payload terkirim -> data hilang diam-diam.
+           Tidak ada retry, tidak ada log error.
+Fix      : Await semua write, log kegagalan dengan jelas, dan（月最少）tulis
+           ke storage lokal dulu sebagai write-behind fallback.
+
+--------------------------------------------------------------------------------
+[BUG-14] HALAMAN /generate FETCH PROYEK 2 KALI
+Severity : TINGGI
+Lokasi   : src/app/generate/page.tsx:172-201 (load by initialProjectId)
+           src/app/generate/page.tsx:471-500 (branch C auto-start)
+Deskripsi: Dua effect terpisah sama-sama memanggil /api/projects?id=...
+           Akibat: 2 request, 2 compile, 2 setCode, flicker preview.
+Fix      : Gabungkan jadi satu effect, guard dengan ref yang sama.
+
+--------------------------------------------------------------------------------
+[BUG-15] GENERASI PERTAMA YANG GAGAL -> RETRY MENJADI "EDIT KODE CONTOH"
+Severity : TINGGI
+Lokasi   : src/app/generate/page.tsx:607 (isFollowUp={!isFirstGeneration})
+           src/app/generate/page.tsx:109 (code awal = examples[0].code)
+           src/hooks/useConversationState.ts:172 (isFirstGeneration)
+Deskripsi: isFirstGeneration = (messages.length === 0). Begitu addErrorMessage
+           menambah satu pesan "error", messages.length = 1 -> semua request
+           berikutnya dikirim sebagai isFollowUp=true dengan currentCode =
+           KODE DEMO (bukan hasil generate user). AI lalu meng-edit kode demo.
+           User melihat animasi Odd yang bukan hasil prompt-nya.
+Fix      : isFollowUp harus = hasGeneratedOnce && code.length > 0 &&
+           code !== examples[0].code. Jangan bergantung pada messages.length.
+
+--------------------------------------------------------------------------------
+[BUG-16] MODEL YANG DIPILIH DI LANDING PAGE DIBUANG
+Severity : TINGGI
+Lokasi   : src/app/page.tsx:33-48 (tidak menyimpan `model` ke pending_generation)
+           src/components/ChatSidebar/ChatSidebar.tsx:119
+             (const [model, setModel] = useState<ModelId>(MODELS[0].id))
+           src/app/generate/page.tsx:413-460 (pending tidak dibaca model)
+Deskripsi: User memilih Claude Haiku/Sonnet di landing page, tetapi payload
+           sessionStorage tidak memuat field `model`, dan /generate selalu
+           memakai default ChatSidebar (Opus).Pilihan user 100% diabaikan.
+Fix      : 1) Simpan model di pending_generation
+           2) Terima sebagai prop initialModel ke ChatSidebar
+
+--------------------------------------------------------------------------------
+[BUG-17] SETTING BAHASA / ASPECT / DURASI HILANG TIAP CHAT MANUAL
+Severity : TINGGI
+Lokasi   : src/components/ChatSidebar/ChatInput.tsx:60-64
+             onSubmit={(attachedImages) => handleGeneration({ attachedImages })}
+           src/components/ChatSidebar/ChatSidebar.tsx:130-160
+           src/app/api/generate/route.ts:344 (default language = "en")
+Deskripsi: Submit manual hanya mengirim attachedImages. Field language,
+           aspectRatio, duration, fps, voice menjadi undefined -> server memakai
+           default: language "en" (UI default "ms"), aspectRatio "16:9",
+           duration 300, fps 30.
+           EFEK NYATA: user Indonesia/Malaysia yang memilih Bahasa Melayu dan
+           rasio 9:16, begitu menulis chat revisi pertama -> AI dipaksa membuat
+           teks INGGRIS dan layout 16:9. Semua revisi berikutnya sama.
+Fix      : 1) Simpan setting di state generate page (bukan hanya pendingRef)
+           2) Selalu kirim language/aspectRatio/duration/fps/voice di setiap
+              request (tersimpan sebagai default)
+           3) Tampilkan setting aktif di sidebar agar user sadar
+
+--------------------------------------------------------------------------------
+[BUG-18] RIWAYAT CHAT YANG DISIMPAN HANYA PLACEHOLDER
+Severity : TINGGI
+Lokasi   : src/app/generate/page.tsx:227 (conversationHistory: getFullContext())
+           src/hooks/useConversationState.ts:158-166
+             (assistant content diganti "[Generated Code]")
+           src/hooks/useConversationState.ts:86-101 (loadConversationMessages)
+Deskripsi: Yang disimpan ke server adalah isi assistant yang sudah diganti jadi
+           literal "[Generated Code]" tanpa metadata (skills, editType, edits).
+           Saat proyek dibuka lagi, chat menampilkan teks "[Generated Code]"
+           sebagai jawaban assistant, badge skill & daftar edit hilang permanen.
+Fix      : Simpan pesan assistant apa adanya (summary) + metadata skills/editType/
+         edits, DAN codeSnapshot terpisah. Jangan pakai getFullContext() untuk
+         penyimpanan.
+
+--------------------------------------------------------------------------------
+[BUG-19] AUTO-VOICEOVER PAKAI URL S3 PRESIGNED (BUKAN SAME-ORIGIN)
+Severity : TINGGI
+Lokasi   : src/app/generate/page.tsx:311
+             const reliableAudioUrl = data.remoteAudioUrl || data.audioUrl ||
+                                      data.apiUrl || data.fileUrl;
+           (bandingkan src/app/api/voiceover/route.ts:167-169 yang menyatakan
+            route same-origin dipakai justru untuk menghindari CORS/mute,
+            dan src/components/AnimationPlayer/VoiceoverModal.tsx:284 yang
+            memakai urutan benar fileUrl -> apiUrl)
+           src/remotion/compiler.ts:172-180 (SafeAudio crossOrigin="anonymous")
+Deskripsi: remoteAudioUrl = S3 presigned, jadi audio yang di-inject ke kode
+           adalah URL cross-origin. Efek:
+             - Memerlukan CORS di bucket S3, jika tidak -> audio tidak bunyi
+             - URL expired setelah 7 hari -> kode proyek & audio rusak permanen
+             - URL presigned ikut ter-export ke code.tsx / ZIP user (lihat
+               BUG-37)
+Fix      : Prioritaskan data.apiUrl (same-origin /api/audio/...) sebelum
+         remoteAudioUrl. Kalau butuh URL untuk Lambda, pakai objek S3 statis
+         (bukan presigned) atau pass URL lewat inputProps terpisah.
+
+--------------------------------------------------------------------------------
+[BUG-20] KARAKTER $ PADA new_string MERUSAK KODE
+Severity : TINGGI
+Lokasi   : src/app/api/generate/route.ts:267
+             result = result.replace(old_string, new_string);
+Deskripsi: String.prototype.replace dengan string replacement meng-interpolasi
+           $&, $`, $', $$, $<n>. Bila LLM mengembalikan string berisi karakter
+           tersebut (mis. teks harga "$5"), kode hasil edit menjadi rusak
+           tanpa error yang jelas.
+Fix      : result = result.replace(old_string, () => new_string);
+
+--------------------------------------------------------------------------------
+[BUG-21] new Function() = EKSEKUSI KODE AI TANPA SANDBOX
+Severity : TINGGI (arsitektur/keamanan)
+Lokasi   : src/remotion/compiler.ts:118-190 (new Function dengan 40 argumen),
+           src/remotion/compiler.ts:3-6 (require("@remotion/lottie"))
+Deskripsi: Kode yang dihasilkan LLM (yang isinya bisa dipengaruhi prompt user,
+           termasuk VOICEOVER_SCRIPT) dieksekusi di origin situs. Tidak ada CSP,
+           tidak ada sandbox, tidak ada blacklist. Hook "Use Frame" /
+           renderStillOnWeb (src/helpers/capture-frame.ts) menjalankan kode yang
+           sama di thread terpisah.
+           Catatan: require() di line 4means Lottie praktis selalu null di
+           bundler ESM — contoh Lottie diam-diam tidak pernah berfungsi.
+Fix      : 1) Sandbox di iframe ber-origin berbeda (sandbox="allow-scripts"
+              tanpa allow-same-origin) + postMessage bridge
+           2) Tambahkan CSP di next.config.js
+           3) Ganti require() Lottie dengan import dinamis / eager static
+
+--------------------------------------------------------------------------------
+[BUG-22] RANGE REQUEST RUSAK UNTUK SUFFIX RANGE
+Severity : TINGGI
+Lokasi   : src/app/api/media/[filename]/route.ts:44-58
+           src/app/api/audio/[filename]/route.ts:68-88
+Deskripsi: Header "bytes=-500" (suffix range, sering dipakai Chrome/Safari untuk
+           audio) -> parts[0] = "" -> parseInt("") = NaN -> start NaN ->
+           Content-Range: "bytes NaN-NaN/12345". Audio/video seek & preload
+           gagal. Route media juga tidak memvalidasi start > end.
+Fix      : Tulis parser Range yang benar ( swiftly dukung bytes=a-b, bytes=a-,
+           bytes=-n) dan validasi NaN / start<0 / start>end sebelum stream.
+
+--------------------------------------------------------------------------------
+[BUG-23] MEDIA & AUDIO TANPA OWNERSHIP CHECK
+Severity : TINGGI
+Lokasi   : src/app/api/media/[filename]/route.ts (GET, tanpa auth)
+           src/app/api/audio/[filename]/route.ts (GET, tanpa auth)
+Deskripsi: Nama file mengandung timestamp + hash, tapi fallbackFilename pada
+           render adalah "render_<projectId>.mp4" dan projectId dibuat di client
+           (src/app/page.tsx:29, format proj_<epoch>_<random>) -> dapat ditebak.
+           Siapa pun yang tahu/猜 URL bisa mengunduh render milik user lain
+           (TTL 24 jam).
+Fix      : Verifikasi session + pemilik render sebelum streaming, atau gunakan
+         token unguessable (UUID) pada nama file.
+
+--------------------------------------------------------------------------------
+[BUG-24] CLEANUP SCHEDULER BERDUPLIKASI / TIDAK JALAN DI SERVERLESS
+Severity : TINGGI
+Lokasi   : src/app/api/media/[filename]/route.ts:8-11
+             if (typeof window === "undefined") startMediaCleanupScheduler();
+           src/lib/localMediaStorage.ts:236-256 (setInterval 60 menit,
+             tanpa unref)
+Deskripsi: Scheduler dipanggil di module scope route. Tidak pernah di-unref,
+           dan flag schedulerStarted di-reset setiap HMR -> banyak interval
+           menumpuk di development. Di platform serverless, interval tidak
+           pernah berjalan -> file MP4 & data proyek menumpuk selamanya
+           (data/media tidak di-gitignore, lihat BUG-56).
+Fix      : 1) Pindahkan scheduler ke entrypoint server (instrumentation.ts)
+           2) Jalankan juga dari cron external / route yang dipanggil periodik
+           3) unref() interval
+
+
+================================================================================
+BAGIAN 3 — FRONTEND / UI-UX
+================================================================================
+
+[BUG-25] VoiceoverModal (650 BARIS) TIDAK PERNAH DIRENDER
+Severity : TINGGI (UI/UX)
+Lokasi   : src/components/AnimationPlayer/VoiceoverModal.tsx (file)
+           import hanya di src/app/generate/page.tsx:9-12,
+           src/components/AnimationPlayer/RenderControls/index.tsx:6,
+           src/components/AnimationPlayer/RenderControls/DownloadButton.tsx:6
+           (semua hanya untuk ambil 2 helper function, bukan komponennya)
+Deskripsi: Komponen <VoiceoverModal> tidak dirender di mana pun. Akibatnya:
+             - Tombol "SwdVoice & Auto-Captions" tidak pernah tampil
+             - User tidak bisa pilih/regenerate suara, ganti kecepatan, atau
+               toggle caption setelah generate
+             - voiceModel di dalam modal adalah const dari prop, tanpa setter
+               -> engine starfish/orca/elevenlabs (src/types/voice.ts) tidak
+               pernah bisa dipilih dari UI mana pun
+             - Pesan di generate/page.tsx:337-342寫 "Auto-applied SwdVoice
+               (${engineLabel})" seolah user bisa memilih engine
+Fix      : Render <VoiceoverModal> di AnimationPlayer (tombol), DAN/ATAU
+         hapus file bila memang tidak mau dipakai. Pilih salah satu, jangan
+         Pharmacopia kode mati 650 baris.
+
+--------------------------------------------------------------------------------
+[BUG-26] SettingsModal MATI -> DURASI & FPS TIDAK BISA DIUBAH
+Severity : TINGGI (UI/UX)
+Lokasi   : src/components/AnimationPlayer/SettingsModal.tsx (tidak dirender)
+           src/app/generate/page.tsx:665-666 (onDurationChange/onFpsChange dikirim)
+           src/components/AnimationPlayer/index.tsx:49-64 (prop diterima tapi
+             TIDAK dipakai; tidak ada import SettingsModal)
+           src/components/LandingPageInput.tsx:105
+             (const [fps] = useState<number>(30) -> tidak ada setter)
+Deskripsi: Tidak ada satu pun tempat pengguna bisa mengubah durasi atau FPS
+           setelah generate. Durasi hanya bisa naik otomatis oleh auto-voiceover
+           (generate/page.tsx:322-334).-property onDurationChange & onFpsChange
+           adalah dead props.
+Fix      : Render SettingsModal di AnimationPlayer, atau hapus prop mati.
+         Tambahkan kontrol durasi di UI (minimal: tombol "Perpanjang +15s").
+
+--------------------------------------------------------------------------------
+[BUG-27] showCodeExamplesLink TIDAK PERNAH DIPAKAI
+Severity : SEDANG (UI/UX)
+Lokasi   : src/components/LandingPageInput.tsx:87 (deklarasi prop)
+           src/components/LandingPageInput.tsx:91-94 (tidak di-destructure)
+           src/app/page.tsx:47 (passing showCodeExamplesLink)
+Deskripsi: Link ke halaman /code-examples hilang dari landing page — fitur
+           dokumentasi contoh tidak bisa diakses dari UI utama.
+Fix      : Destructure showCodeExamplesLink dan render link-nya, atau hapus
+         prop dari interface.
+
+--------------------------------------------------------------------------------
+[BUG-28] RACE AUTH DI /generate -> GENERATE GRATIS UNTUK GUEST
+Severity : TINGGI
+Lokasi   : src/app/generate/page.tsx:444-455 (setTimeout 150ms ->
+             chatSidebarRef.triggerGeneration)
+           src/lib/auth-context.tsx:44-84 (refreshUser async -> redirect /login)
+           src/app/api/generate/route.ts:366-377 (tanpa userEmail = tanpa charge)
+Deskripsi: Auto-start berjalan 150ms setelah mount, tanpa menunggu AuthProvider
+           selesai. Alur nyata untuk guest:
+             1) Buka landing (UserHeaderProfile return null, tidak ada guard)
+             2) Tulis prompt, pilih style, klik Generate
+             3) Navigate ke /generate -> auto-start 150ms -> POST /api/generate
+                tanpa session -> server TIDAK charge -> LLM Opus jalan gratis
+             4)(refreshUser kena 401) -> router.push("/login") muncul bersamaan
+           Double bug: biaya LLM gratis + UIixa yang membingungkan.
+Fix      : 1) Gate auto-start di authLoaded && user (tunggu /api/auth/me selesai)
+           2) Guard /api/generate: tolak request tanpa session (lihat BUG-03)
+           3) Tampilkan skeleton "Memverifikasi akun..." saat auth loading
+
+--------------------------------------------------------------------------------
+[BUG-29] LOGIN BISA TOTAL TERBLOKIR + TYPO TEKS
+Severity : TINGGI (UI/UX)
+Lokasi   : src/app/login/page.tsx:70-90 (turnstile.render dalam try/catch)
+           src/app/login/page.tsx:105-116 (checkInterval 200ms tanpa batas)
+           src/app/login/page.tsx (teks "Verifyin Swdbot VIP status...")
+Deskripsi: Bila NEXT_PUBLIC_CLOUDFLARE_TURNSTILE_SITEKEY / /api/config kosong
+           atau error, window.turnstile.render() throw -> hanya console.error ->
+           isVerified tidak pernah true -> tombol Google tidak pernah muncul.
+           Tidak ada fallback, tidak ada pesan ke user.-inducing 200ms
+           interval juga mencoba render ulang terus-menerus tanpa henti.
+           Typo yang tampil ke user: "Verifyin Swdbot VIP status..." (huruf g
+           hilang).
+Fix      : 1) Cek sitekey sebelum load; jika kosong, skip Turnstile dengan
+           banner informatif (atau blokir dengan pesan jelas)
+           2) Hentikan interval setelah N percobaan / gunakan event onload
+           3) Perbaiki teks "Verifyin" -> "Verifying"
+           4) Tambahkan tombol refresh Turnstile
+
+--------------------------------------------------------------------------------
+[BUG-30] TOMBOL GOOGLE BERKEDIP (EFFECT RE-RUN TIAP RENDER)
+Severity : SEDANG (UI/UX)
+Lokasi   : src/app/login/page.tsx:214 (deps [isVerified, config, login, router])
+           src/lib/auth-context.tsx:108-131 (login tanpa useCallback)
+           src/lib/auth-context.tsx:38-58 (refreshUser tanpa useCallback,
+             depend pada pathname)
+           src/app/login/page.tsx:180-197 (btnEl.innerHTML="" lalu renderButton)
+Deskripsi: Karena login & refreshUser dibuat ulang tiap render, effect Google
+           SDK berjalan ulang -> tombol dihapus & dibuat ulang berulang ->
+           flickering, dan bisa gagal diklik di tengah proses.
+Fix      : Bungkus login & refreshUser dengan useCallback (dependency minimal,
+         jangan pathname/router). Tambahkan deps login ke dalam login effect.
+
+--------------------------------------------------------------------------------
+[BUG-31] CODE TAB KOSONG SAAT ADA ERROR
+Severity : SEDANG (UI/UX)
+Lokasi   : src/app/generate/page.tsx:635
+             code={hasGeneratedOnce && !generationError ? code : ""}
+Deskripsi: Begitu ada error, seluruh kode lenyap dari tab Code (padahal preview
+           masih memakai Component lama). User mengira kodenya hilang/hapus,
+           dan mengedit dari sana bisa menimpa kode yang masih berjalan.
+Fix      : Selalu kirim code asli ke CodeEditor; error ditampilkan di banner
+         terpisah (tidak dengan mengosongkan editor).
+
+--------------------------------------------------------------------------------
+[BUG-32] PLAYER DI-REMOUNT TIAP PERUBAHAN DURASI -> PLAYBACK RESET
+Severity : SEDANG (UI/UX)
+Lokasi   : src/components/AnimationPlayer/index.tsx:159
+             key={`${aspectRatio}-${durationInFrames}-${audioSrc}`}
+           src/app/generate/page.tsx:322-334 (durasi dinaikkan otomatis)
+Deskripsi: Perubahan durationInFrames (otomatis oleh auto-voiceover) atau
+           aspectRatio me-remount <Player> -> playback balik ke frame 0 dan
+           audio restart. User yang sedangGK旋律 reviewing video terputus.
+Fix      : Jangan masukkan durationInFrames ke dalam key. Gunakan
+         imperative playerRef.seekTo() untuk mempertahankan posisi, atau
+         perbarui duration tanpa remount.
+
+--------------------------------------------------------------------------------
+[BUG-33] undo() TIDAK MENGHENTIKAN POLLING RENDER + TIDAK ADA TOMBOL CANCEL
+Severity : TINGGI (UX/Workflow)
+Lokasi   : src/helpers/use-rendering.ts:57-113 (loop getProgress tiap 1 detik)
+           src/helpers/use-rendering.ts:117-120 (undo hanya setState init)
+           src/components/AnimationPlayer/RenderControls/index.tsx:120
+             (return <ProgressBar/> -> semua kontrol hilang)
+Deskripsi: 1) undo() hanya mengubah state; loop polling tetap berjalan dan
+              akan menimpa state kembali ke done/rendering untuk render lama
+           2) Saat rendering, semua tombol (termasuk Render & Download) diganti
+              ProgressBar -> tidak ada cara membatalkan render yang sudah
+              dibayar
+           3) Tidak ada unmount cleanup: if user navigate away, polling tetap
+              berjalan di memory
+Fix      : 1) Pakai AbortController / flag cancelled di loop; hentikan saat undo
+              atau unmount
+           2) Sediakan tombol "Cancel" (dan jelaskan statusnya: credits sudah
+              terpotong / dikembalikan)
+           3) Pause polling saat tab tidak aktif (document.visibilityState)
+
+--------------------------------------------------------------------------------
+[BUG-34] TIDAK ADA KONFIRMASI BIAYA RENDER; BIAYA CHAT TIDAK PERNAH DITAMPILKAN
+Severity : SEDANG (UX/Billing)
+Lokasi   : src/components/AnimationPlayer/RenderControls/index.tsx:96-106
+           src/components/LandingPageInput.tsx:64-70 (hanya biaya generate)
+Deskripsi: Tombol "Render & Download" langsung memicu potong 10 kredit (default)
+           tanpa dialog konfirmasi, tanpa menampilkan biaya di tombol. Biaya
+           chat (1 kredit/pesan) dan biaya render (10 kredit) tidak pernah
+           ditampilkan di mana pun, padahal auto-correction bisa membakar 3
+           kredit tanpa sepengetahuan user.
+Fix      : 1) Tombol render: "Render MP4 (10 Credits)" + dialog konfirmasi
+         2) Tampilkan "riwayat pemakaian & biaya" di sidebar/header
+         3)ksh EMBAR billing summary sebelum request昂贵
+
+--------------------------------------------------------------------------------
+[BUG-35] CopyButton & DIALOG BROWSAER UNTUK ERROR
+Severity : SEDANG (UX/Aksesibilitas)
+Lokasi   : src/components/CodeEditor/CopyButton.tsx (writeText tanpa try/catch)
+           src/components/AnimationPlayer/RenderControls/DownloadButton.tsx:130
+             (alert)
+           src/app/admin/page.tsx:240 (alert), :271/:300 (alert), :283/:1129
+             (confirm/prompt)
+           src/components/ChatSidebar/ChatSidebar.tsx:216 (confirm)
+           src/components/ProjectHistoryModal.tsx:70 (confirm)
+Deskripsi: navigator.clipboard gagal diam-diam di non-HTTPS/iframe. alert/
+           confirm/prompt memblokir thread UI, tidak bisa di-style, buruk untuk
+           aksesibilitas & screenshot testing. Admin memakai window.prompt untuk
+           edit kuota — sangat tidak konsisten dengan UI dark premium.
+Fix      : 1) CopyButton: try/catch + toast "Gagal menyalin"
+         2) Ganti semua alert/confirm/prompt dengan Dialog + Toast (sudah ada
+            komponen ui/dialog, dan pola ErrorDisplay)
+
+--------------------------------------------------------------------------------
+[BUG-36] "Single HTML" TIDAK OFFLINE (TOOLTIP MENYESATKAN)
+Severity : SEDANG (UX)
+Lokasi   : src/components/AnimationPlayer/RenderControls/DownloadButton.tsx:65-72
+             generateSingleHtml({ videoUrl: state.url, ... })
+           src/lib/single-html.ts (videoUrl ditulis apa adanya)
+Deskripsi: state.url menunjuk ke /api/media/<file> milik server yang expired
+           24 jam (lihat BUG-41). Tooltip menyebut "self-contained offline
+           HTML player" — file hasil download mati setelah 24 jam.
+           (Versi ZIP benar karena memakai path relatif "video.mp4".)
+Fix      : Untuk mode standalone, embed video sebagai blob/data URI (opsional
+         dengan警告 ukuran), atau tulis sidebar "PLAYER MEMERLUKAN KONEKSI
+         & URL BERTAKAH 24 JAM".
+
+--------------------------------------------------------------------------------
+[BUG-37] EKSPOR ZIP MEMBOCORKAN URL S3 PRESIGNED
+Severity : TINGGI (data/privacy)
+Lokasi   : src/components/AnimationPlayer/RenderControls/DownloadButton.tsx:118-142
+             entries: [{ filename: "code.tsx", data: code }]
+           src/components/AnimationPlayer/VoiceoverModal.tsx:131-145
+             (URL disuntik ke dalam kode)
+Deskripsi: code.tsx di dalam ZIP mengandung URL presigned S3 (valid 7 hari).
+           File ZIP dikirim ke user / dibagikan -> signed URL AWS bocor ke pihak
+           lain dan bisa dipakai membaca objek selama masa berlaku.
+Fix      : Before export, ganti URL S3 dengan URL same-origin /api/audio/...
+         atau jangan sertakan kode yang mengandung URL.
+
+--------------------------------------------------------------------------------
+[BUG-38] PEMBUATAN ZIP BOROS MEMORI (RISIKO CRASH)
+Severity : SEDANG
+Lokasi   : src/components/AnimationPlayer/RenderControls/DownloadButton.tsx:96-140
+           src/lib/localMediaStorage.ts:22 (MAX 300 MB)
+Deskripsi: Download ZIP menarik seluruh video ke memori (arrayBuffer, s/d 300 MB),
+         lalu membuat ZIP store (tanpa kompresi) → 2x ukuran video di RAM
+         + salinan Blob. Risiko crash/hang di browser danHp平安 mobile.
+Fix      : Pakai streaming (Blob.slice per chunk) atau worker terpisah; atau
+         ZIP hanya berisi HTML+script tanpa video & beri link unduhan terpisah.
+
+--------------------------------------------------------------------------------
+[BUG-39] MOJIBAKE (U+FFFD) PADA STRING YANG DITAMPILKAN KE USER
+Severity : SEDANG (UX)
+Lokasi   : src/hooks/useImageAttachments.ts:106
+             `Could not read video "${video.name}" �?" frames could not be extracted.`
+           src/lib/single-html.ts (brand "dYZ�", badge "�" di header HTML)
+           src/components/ChatSidebar/ChatInput.tsx:151
+             title={`${m.description} �? Supports: ...`}
+           src/lib/runtime-logger.ts:17-22 (ikon log "�o." / "�?O" / "dYs?")
+           src/app/api/lambda/render/route.ts:25 (komentar)
+           src/lib/llm-provider.ts:7,28,44 (komentar)
+           .env.example ("# Opsional �?")
+Deskripsi: Karakter replacement (U+FFFD) tersimpan di source akibat salah
+           encoding saat edit. unbelievably user melihat kotak-kotak di error
+           message video, di tooltip model, dan di file HTML yang diunduh.
+Fix      : Bersihkan semua karakter U+FFFD, ganti dengan em-dash/arrow yang
+         benar (— / →), lalu pastikan file disimpan UTF-8.
+
+--------------------------------------------------------------------------------
+[BUG-40] ADMIN: FORM PRICING DITIMPA TIAP 6 DETIK
+Severity : TINGGI (UX admin)
+Lokasi   : src/app/admin/page.tsx:164-170 (setForm* dari server)
+           src/app/admin/page.tsx:200-206 (setInterval fetchData 6000ms)
+           src/app/admin/page.tsx:130 (const autoRefresh = true)
+Deskripsi: Auto-refresh 6 detik menulis ulang 4 field form pricing. Admin yang
+           sedang mengetik angka (mis. mengetik "5" untuk menjadi "50") →
+           nilainya hilang ditimpa data server. Perubahan settingalmost must
+           impossible diketik dengan aman.
+Fix      : 1) Auto-refresh hanya update stats/table, JANGAN sentuh form state
+         2) Track isDirtyForm; skip sinkronisasi form selama dirty
+         3) Naikkan interval ke 15-30 detik
+
+--------------------------------------------------------------------------------
+[BUG-41] ADMIN: METRIK RENDERS & FEE SALAH / HARDCODE 50%
+Severity : TINGGI (data integrity)
+Lokasi   : src/app/admin/page.tsx:1214 (judul "50% DEVELOPER FEE LOGGED")
+           src/app/admin/page.tsx:1262 (RM {(rnd.credits * 0.5).toFixed(2)})
+           src/app/admin/page.tsx:1209
+             (renderActivities.length * settings.renderCost)
+           src/lib/credits.ts:456-457
+             (devFee = credits * settings.developerFeePercent/100 saat计算)
+Deskripsi: 1) Baris tabel render hardcode 0.5 walau setting diubah ke 60% →
+              angka tidak cocok dengan ringkasan di atasnya
+           2) "GROSS CREDITS DEDUCTED" = jumlah render x renderCost SEKARANG
+              → historis jadi salah begitu admin mengubah tarif
+           3) Developer fee dihitung ulang dari aktivitas terakhir (100-500
+              record) dengan persentase saat ini → nilai historis berubah
+              sendiri setiap kali setting diubah
+           4) src/app/admin/page.tsx:491 label "Total system consumption" padahal
+              hanya 100-500 activity terakhir (bukan total)
+Fix      : Simpan developerFeePercent & charged amount DI DALAM metadata
+         activity saat itu terjadi; admin画面 cukup baca, tidak menghitung ulang.
+
+--------------------------------------------------------------------------------
+[BUG-42] ADMIN: BLOKIR USER TIDAK MUNGKIN UNTUK NON-VIP + STATUS SELALU "ACTIVE VIP"
+Severity : TINGGI
+Lokasi   : src/lib/credits.ts:503 (query vip=eq.true&limit=500)
+           src/app/admin/page.tsx:1152-1157 (status hardcode "Active VIP")
+           src/lib/credits.ts:468-481 (totalUsers dihitung tapi tidak dirender)
+Deskripsi: 1) getAllProfilesForAdmin hanya mengambil user VIP -> user non-VIP
+              tidak pernah tampil, sehingga fitur "Block User" tidak bisa
+              dipakai untuk mereka (user non-VIP paling butuh pemblokiran)
+           2) Kolom Status menampilkan "Active VIP" bahkan ketika user sudah
+              di-block (hanya label tombol yang berubah)
+           3) totalUsers dari server tidak pernah ditampilkan
+Fix      : Query semua profile dengan pagination + filter/search; render status
+        Blocked / VIP Expired / Active dengan benar; tampilkan totalUsers.
+
+--------------------------------------------------------------------------------
+[BUG-43] ADMIN: DAFTAR EMAIL ADMIN DUPLIKAT DI CLIENT
+Severity : TINGGI (security/UX)
+Lokasi   : src/app/admin/page.tsx:31-34 (ALLOWED_ADMIN_EMAILS hardcode)
+           src/lib/auth.ts:29-32 (DEFAULT_ADMIN_EMAILS)
+           src/lib/auth.ts:34-52 (getAdminEmails juga baca env)
+Deskripsi: Admin yang didaftarkan lewat env ADMIN_EMAILS: API-nya berjalan
+           (server pakai getAdminEmails) tetapi UI menampilkan "Access Denied".
+           Sebaliknya, daftar email admin di-hardcode di bundle client =
+           membocorkan email admin ke publik.
+Fix      : Jangan|Т списывать email admin di client. Tambahkan field
+         isAdmin dari /api/auth/me (sudah ada di SwdbotSessionUser) dan
+        ,andalkan itu untuk gating UI.
+
+--------------------------------------------------------------------------------
+[BUG-44] "START OVER" TIDAK MEMBERSIHKAN APA PUN
+Severity : SEDANG
+Lokasi   : src/components/ChatSidebar/ChatSidebar.tsx:214-222
+Deskripsi: Tombol Reset melakukan window.confirm lalu location.href = "/" tanpa
+           menghapus proyek dari server -> Project History menumpuk proyek
+           kosong/bekas (selama 24 jam), user bisa bingung.
+Fix      : Tawarkan "Mulai baru" (buat projectId baru) vs "Hapus proyek ini"
+         (DELETE /api/projects), atau reset state in-place tanpa pindah halaman.
+
+--------------------------------------------------------------------------------
+[BUG-45] AKSESIBILITAS: MODAL TANPA FOCUS TRAP, OVERLAY OVERLAY
+Severity : SEDANG
+Lokasi   : src/components/ProjectHistoryModal.tsx (role="dialog" tanpa focus
+             trap, tanpa scroll lock, tombol X tanpa aria-label)
+           src/app/layout.tsx (body className "select-none")
+           src/components/ErrorDisplay.tsx (variant fullscreen selalu aspect-video)
+Deskripsi: 1) Dialog history tidak menahan fokus keyboard nor mengembalikan
+              fokus ke pemicu; tombol close tidak punya aria-label
+           2) body select-none=user tidak bisa menyeleksi teks output/error
+           3) Error fullscreen memakai aspect-video selalu -> pada 9:16 panel
+              error terpotong/tidak proporsional
+Fix      : Pakai Radix Dialog (sudah ada di components/ui/dialog.tsx) atau
+         tambahkan focus trap + scroll lock; hapus select-none dari body;
+         ganti aspect-video dengan aspect rasio dinamis.
+
+--------------------------------------------------------------------------------
+[BUG-46] DIREKTIF ASPECT RATIO TERKIRIM DUA KALI
+Severity : SEDANG
+Lokasi   : src/components/LandingPageInput.tsx:265-275 (aspectRatioDirective
+             ditempel ke prompt)
+           src/app/api/generate/route.ts:566-573 (aspectRatioInstruction
+             ditambahkan lagi ke system prompt)
+Deskripsi: Instruksi aspect ratio terkirim dua kali (versi prompt + versi
+           system prompt) dengan teks berbeda. Boros token dan berisiko
+           instruksi kontradiktif (mis. 16:9 wd "presentation" vs "cinematic").
+Fix     : Pilih satu sumber kebenaran (server), hapus aspectRatioDirective dari
+         landing page.
+
+--------------------------------------------------------------------------------
+[BUG-47] VALIDASI RESPONSE CLIENT SANGAT LEMAH
+Severity : SEDANG
+Lokasi   : src/helpers/sanitize-response.ts:22-38 (validateGptResponse: hanya
+             regex /<[A-Z][a-zA-Z]*|<[a-z]+[^>]*>/)
+           src/helpers/sanitize-response.ts:48-92 (extractComponentCode hanya
+             mengenali "export const X = () => {")
+           src/hooks/useGenerationApi.ts:180-186, 245-252
+Deskripsi: 1) Regex JSX bisa false-positive pada teks biasa ("Array<string>")
+           2) extractComponentCode tidak mengenali "export const X: React.FC =
+             () => {" atau "function X()" -> teks penjelasan dari LLM ikut
+             tersimpan di editor dan di-render sebagai kode
+           3) Pemeriksaan validasi dijalankan SETELAH onGenerationComplete ->
+              user sempat melihat kode rusak
+Fix      : Perbaiki regex (bracket/brace matching), tambahkan varian
+         "export const X: React.FC = () => {", dan validasi sebelum report
+         complete.
+
+--------------------------------------------------------------------------------
+[BUG-48] RUNTIME ERROR TIDAK PERNAH DI-RESET SAAT USER MENGEDIT
+Severity : SEDANG
+Lokasi   : src/app/generate/page.tsx:115 (codeError = compilationError ||
+             runtimeError)
+           src/app/generate/page.tsx:402-406 (handleRuntimeError setState)
+           src/hooks/useAutoCorrection.ts (memakai codeError sebagai pemicu)
+Deskripsi: runtimeError hanya di-reset saat streaming BARU (handleStreamingChange
+           :382-387). Bila user memperbaiki kode secara manual, runtimeError
+           lama tetap ada -> codeError masih terisi -> auto-correction tetap
+           memicu (sampai 3x, 1 kredit per percobaan) untuk error yang sudah
+           tidak relevan.
+Fix     : Reset runtimeError di handleCodeChange, atau hanya auto-correct bila
+         error muncul SETELAH perubahan kode terakhir.
+
+--------------------------------------------------------------------------------
+[BUG-49] PROMPT PRESET MENimpa PROMPT USER TANPA PEMBERITAHUAN
+Severity : RENDAH/SEDANG (UX)
+Lokasi   : src/components/LandingPageInput.tsx:343-349 (handleSelectExamplePrompt
+             -> setPrompt(ex.prompt))
+Deskripsi: Memilih "Style Presets" langsung menimpa seluruh teks prompt yang
+           sudah diketik user tanpa konfirmasi. Untuk prompt panjang, kerja user
+           hilang.
+Fix      : Konfirmasi bila prompt sudah berisi teks, atau sisipkan preset di
+         akhir prompt.
+
+--------------------------------------------------------------------------------
+[BUG-50] CREDENTIAL DI LOCALSTORAGE (XSS BLAST RADIUS)
+Severity : SEDANG
+Lokasi   : src/lib/auth-context.tsx:58-59, 121-122
+             localStorage.setItem("swdbot_user_api_key", data.user.key)
+             localStorage.setItem("swdbot_user_info", JSON.stringify(data.user))
+Deskripsi: user.key (legacy_key, lihat BUG-02) disimpan persisten di localStorage
+           dan dikirim sebagai header x-user-api-key. XSS kecil di situs mana
+           pun pada origin yang sama bisa membacanya.
+Fix      : Setelah BUG-02 diperbaiki, hapus penyimpanan key; simpan hanya
+         email/nama/avatar untuk tampilan.
+
+--------------------------------------------------------------------------------
+[BUG-51] SESSION SLIDING TANPA BATAS + COOKIE DI-TULIS TIAP 60 DETIK
+Severity : RENDAH
+Lokasi   : src/app/api/auth/me/route.ts:110-118 (set cookie baru maxAge 7d)
+           src/lib/auth-context.tsx:145-155 (refreshUser tiap 60 detik)
+Deskripsi: Setiap refresh_user menCLR cookie 7 hari (sliding session tanpa
+           batas) dan menulis header Set-Cookie tiap 60 detik. Cookie jadi tidak
+           pernah kedaluwarsa untuk akun aktif.
+Fix     : Tetapkan absolute expiry (mis. refresh hanya sampai 7 hari dari
+         login awal), dan refresh cookie hanya bila akan segera kedaluwarsa.
+
+--------------------------------------------------------------------------------
+[BUG-52] /api/config MENGEMBALIKAN CLIENT ID TANPA CACHE HEADER
+Severity : RENDAH
+Lokasi   : src/app/api/config/route.ts (tanpa Cache-Control; tiap load halaman
+           memicu request)
+           src/app/api/voices/route.ts:36-40 (suDAH ada cache 30 menit —
+           tidak konsisten)
+Deskripsi: /api/config di-hit setiap mount AuthProvider/login page tanpa cache.
+Fix      : Tambahkan Cache-Control: public, max-age=300 (data tidak sensitif).
+
+--------------------------------------------------------------------------------
+[BUG-53] TIDAK ADA STATE LOADING UNTUK PROJECT HISTORY SAAT DELETE GAGAL
+Severity : RENDAH
+Lokasi   : src/components/ProjectHistoryModal.tsx:70-90 (handleDelete: diam bila
+             res.ok false)
+Deskripsi: Jika DELETE gagal (401/500), tidak ada umpan balik ke user; proyek
+           tetap terlihat seolah belum terhapus.
+Fix      : Tampilkan toast error dan tetap refresh daftar.
+
+--------------------------------------------------------------------------------
+[BUG-54] ERROR DARI LLM DISPLAY UTUH TANPA POTONG (BISA MEMBOCORKAN PROMPT)
+Severity : RENDAH
+Lokasi   : src/components/ErrorDisplay.tsx (pre whitespace-pre-wrap break-words)
+           src/app/api/generate/route.ts:836-966 (pesan error mentah diteruskan)
+Deskripsi: Pesan error dari provider bisa memuat potongan prompt/kode user dan
+           ditampilkan penuh di UI (jug bisa sangat panjang/mengganggu layout).
+Fix      : Batasi panjang error yang ditampilkan (mis. 400 karakter + tombol
+         "lihat detail" untuk developer log).
+
+
+================================================================================
+BAGIAN 4 — TOOLING / INFRA / BUILD
+================================================================================
+
+[BUG-55] npm run lint GAGAL — 72 ERROR
+Severity : TINGGI (CI/CD)
+Lokasi   : seluruh repo; konsentrasi di:
+           src/lib/credits.ts (10 error: no-empty 7x, no-explicit-any 3x)
+           src/lib/auth-context.tsx (3 no-empty, 1 unused, 1 any)
+           src/lib/projects.ts (2 no-empty, 1 any)
+           src/lib/audio-storage.ts (1 no-empty)
+           src/remotion/compiler.ts (require-imports, no-empty, any)
+           src/lib/llm-provider.ts (3 unused param)
+           src/remotion/AnimatedCaptions.tsx (prefer-const)
+Bukti    : npx eslint . -> "✖ 77 problems (72 errors, 5 warnings)"
+Catatan  :|no-empty pada catch {} menyembunyikan kegagalan penting
+           (mis. catch {} di credits.ts:87, 103, 166, 186, 211, 222, 482).
+Fix      : Ganti catch {} dengan catch (e) { log warn } minimal, atau set
+         aturan no-empty: { allowEmptyCatch: true } sementara lalu perbaiki
+         yangsubstantif. Pastikan `npm run lint` hijau sebelum deploy.
+
+--------------------------------------------------------------------------------
+[BUG-56] data/ TIDAK DI .gitignore
+Severity : TINGGI
+Lokasi   : .gitignore (tidak ada entri /data)
+Bukti    : git check-ignore data -> kosong
+           src/lib/localMediaStorage.ts:3-5 (MEDIA_DIR = ./data/media)
+Deskripsi: File MP4 hasil render (sampai 300 MB, BUG-38) dan cache media berada
+           di ./data. Jika developer menjalankan git add ., seluruh video
+           hasil render user masuk repository.
+Fix      : Tambahkan "/data/" ke .gitignore (dan pertahankan
+           /public/voiceovers/*.mp3 yang sudah ada).
+
+--------------------------------------------------------------------------------
+[BUG-57] src/data/*.json DI-COMMIT (LOCAL STATE SEBAGAI SOURCE OF TRUTH)
+Severity : SEDANG
+Lokasi   : src/data/motion_projects.json (2 byte "[]")
+           src/data/motion_activities.json (2 byte "[]")
+           dipakai di src/lib/projects.ts:24 dan src/lib/credits.ts:43
+Deskripsi: File JSON lokal (yang jadi fallback efektif karena BUG-12) ikut
+           di-version control → state server ikut ter-commit dan bentrok
+           antar developer.
+Fix      : Tambahkan ke .gitignore, dan jadikan Supabase satu-satunya sumber.
+
+--------------------------------------------------------------------------------
+[BUG-58] TIDAK ADA middleware.ts — PROTEKSI ROUTE NOL
+Severity : TINGGI (security)
+Lokasi   : repo (tidak ada file middleware.ts)
+Deskripsi: Seluruh proteksi_admin|/api|/generate|/generate-page dilakukan
+           manual per-route (copy-paste getAuthUser/checkAdmin di 6+ file).
+           Risiko: route baru forgets check → terbuka.
+Fix      : Tambahkan src/middleware.ts terpusat (auth + rate limit), lalu
+         sederhanakan checkAdmin per route.
+
+--------------------------------------------------------------------------------
+[BUG-59] deploy.mjs DIJALANKAN SETIAP BUILD + process.exit(0) SENGAJA
+Severity : SEDANG
+Lokasi   : vercel.json (buildCommand: "node deploy.mjs && next build")
+           deploy.mjs:16-36 (cek AWS key -> console + process.exit(0))
+           deploy.mjs:44-56 (deployFunction setiap build)
+Deskripsi: 1) Setiap build_ci memanggil deploy Lambda & deploy site (mahal,
+              lambat, consumes AWS permission di mana pun build berjalan)
+           2) Kalau AWS key kosong, exit(0) dengan pesan "Lambda renders were
+              not set up" — build SUDAH.odg Berhasil tapi render tidak akan
+              pernah bekerja; user hanya melihat error "AWS credentials
+              missing" (BUG-08) saat menekan Render
+           3) Typo pesan: "REMOTION_REMOTION_AWS_SECRET_ACCESS_KEY"
+              (deploy.mjs:29)
+Fix      : 1) Jalankan deploy Lambda manual/terpisah dari build
+           2) Tampilkan warning yang jelas di UI saat Lambda belum dikonfigurasi
+              (endpoint /api/health-check)
+
+--------------------------------------------------------------------------------
+[BUG-60] .env.example RUSAK ENCODING + DOC MENGELUARKAN PROVIDER LAMA
+Severity : RENDAH
+Lokasi   : .env.example baris "# Opsional �?" (U+FFFD)
+           .env.example "LLM_PROVIDER=shiteru"
+           src/lib/llm-provider.ts:38-46 (default sudah "anthropic")
+           src/data/ tidak ada
+Deskripsi: Developer baru akan menyalin .env.example dan mengira LLM_PROVIDER
+           harus "shiteru" (provider sudah diganti AnthropicClaude; default code
+           = anthropic). Baris SHITERU_API_KEY/SHITERU_BASE_URL tidak lagi
+           dipakai kode mana pun (grep: hanya alias tak terpakai).
+Fix      : Tulis ulang .env.example: hapus blok Shiteru, tambahkan
+         ANTHROPIC_API_KEY, AUTH_SESSION_SECRET (wajib), SUPABASE_*,
+         SERVICE_ROLE_KEY, GOOGLE_CLIENT_ID, NEXT_PUBLIC_CLOUDFLARE_TURNSTILE_*,
+         REMOTION_AWS_*, HEYGEN_API_KEY, ADMIN_EMAILS, NEXT_PUBLIC_APP_URL.
+
+--------------------------------------------------------------------------------
+[BUG-61] TIDAK ADA SECURITY HEADERS / CSP
+Severity : SEDANG
+Lokasi   : next.config.js (hanya reactStrictMode + rule md)
+Deskripsi: Tidak ada Content-Security-Policy, X-Frame-Options, Referrer-Policy.
+           MenggxgOTORASI dengan BUG-21 (new Function untuk kode LLM) +
+           storage kredensial di localStorage (BUG-50) tanpa lapisan pertahanan.
+Fix      : Tambahkan headers() di next.config.js. CSP minimal:
+         default-src 'self'; img-src 'self' data: https:;
+         media-src 'self' https:; script-src 'self' 'unsafe-eval' (sementara,
+         until sandbox iframe), frame-ancestors 'none'.
+         Catatan: 'unsafe-eval' wajib selama masih pakai new Function.
+
+--------------------------------------------------------------------------------
+[BUG-62] <img> UNTUK SEMUA GAMBAR (LCP & BANDWIDTH)
+Severity : RENDAH (perf)
+Lokasi   : 12+ file memakai <img> dengan eslint-disable
+           (LandingPageInput, StylePicker, UserHeaderProfile, admin/page,
+            ChatInput, ChatHistory, CodeEditor area, dll)
+           public/assets/underwater_login_bg.png = 1.0 MB (login hero)
+           public/swdbot-logo.png = 162 KB (header semua halaman)
+Bukti    : eslint plugin @next/next/no-img-element aktif (warning)
+Fix      : Pakai next/image (fill + sizes) untuk logo, gallery, avatar.
+           Header.png 162KB untuk logo 28px sangat boros; convert ke SVG/WebP.
+
+--------------------------------------------------------------------------------
+[BUG-63] FLAG BENDERA DARI API EKSTERNAL TANPA FALLBACK
+Severity : RENDAH (UX/reliability)
+Lokasi   : src/types/voice.ts (flagUrl https://flagsapi.com/...)
+           src/components/LandingPageInput.tsx:685-705, 743, 780
+           src/components/AnimationPlayer/VoiceoverModal.tsx:450-454
+Deskripsi: Bendera diambil dari flagsapi.com pihak ketiga. Jika diblokir/downed,
+           img kosong tanpa fallback → dropdown bahasa terlihat rusak. Link juga
+           exposes IP user ke pihak ketiga.
+Fix      : Simpan 3 file flag lokal (16px) di /public/flags atau gunakan emoji.
+
+--------------------------------------------------------------------------------
+[BUG-64] TOOLTIP MODEL MEMBAWA KARAKTER MOJIBAKE (terkait BUG-39)
+Severity : RENDAH
+Lokasi   : src/components/ChatSidebar/ChatInput.tsx:151
+Deskripsi: String title pada SelectItem model memuat "�?" (U+FFFD) sebelum
+           "Supports:" — muncul saat hover di production.
+Fix      : Ganti dengan bullet "•" yang benar.
+
+--------------------------------------------------------------------------------
+[BUG-65] STATE 'RENDERING' project tidak pernah di-refresh dari UI
+Severity : SEDANG
+Lokasi   : src/components/ProjectHistoryModal.tsx (badge "Rendering" dari
+             project.renderStatus)
+           src/app/api/lambda/render/route.ts:130-140 (set "rendering" + renderId)
+           src/app/api/lambda/progress/route.ts (set "completed")
+Deskripsi: Project History menampilkan badge "Rendering" berdasarkan data yang
+           disimpan, tapi tidak ada polling/refresh → badge bisa menggantung
+           "Rendering" selamanya jika render gagal atau halaman dibiarkan
+           terbuka. Tidak ada status "failed".
+Fix      : Tambahkan polling status render di modal + status "failed" +
+           aksi "Retry render" (dengan konfirmasi biaya).
+
+--------------------------------------------------------------------------------
+[BUG-66] RENDER GAGAL = KREDIT HILANG + TIDAK ADA STATUS FAILED
+Severity : SEDANG (bergabung BUG-08)
+Lokasi   : src/app/api/lambda/render/route.ts (catch hanya log)
+           src/lib/projects.ts:14 (renderStatus tidak punya "failed")
+           src/helpers/use-rendering.ts (error state hanya lokal di browser)
+Deskripsi: Jika renderLambda gagal, proyek tetap berstatus "rendering" atau
+           "idle", user tidak pernah tahu发生了什么, dan kredit tetap terpotong.
+           Tidak ada retry yang aman maupun refund.
+Fix      : 1) Patch renderStatus="failed" + simpan pesan error
+         2) Tampilkan tombol "Coba lagi" dengan konfirmasi biaya
+         3) Implementasikan refundCredits()
+
+
+================================================================================
+RINGKASAN TAMBAHAN (DATA / KONSISTENSI)
+================================================================================
+
+A. src/app/api/generate/route.ts:461-494 — validasi prompt memakai LLM terpisah
+   (mahal) dan logika要不 lenient (reply.startsWith("false")). Pesan yang LLM
+   balas bebas (mis. "False, this is not valid") lolos. Sisa tidak ada
+   validasi pada beberapa jalur → tentang "false"/"no".
+
+B. src/app/api/generate/route.ts:496-535 — deteksi skill berjalan untuk SETIAP
+   request termasuk follow-up sederhana (1 panggilan LLM tambahan per chat,
+   dibayar developer). Untuk edit kecil, ini boros. Pertimbangkan lewati bila
+   previouslyUsedSkills sudah mencakup atau untuk edit kecil.
+
+C. src/app/api/generate/route.ts:926-945 — logRuntime SUCCESS dipanggil setelah
+   loop stream selesai, TIDAK memeriksa apakah stream berisi error → log
+   "SUCCESS" padahal output mungkin error/terpotong.
+
+D. src/app/api/generate/route.ts — tidak ada abort: user menutup tab/refresh
+   saat streaming → server tetap membayar penuh panggilan LLM (charge sudah
+   terjadi, credit hangus). Tambahkan cancellation handling + refund sebagian.
+
+E. src/lib/audio-storage.ts:110-118 (saveLocalProjects equivalent) — audio juga
+   ditulis ke public/voiceovers/*.mp3 saat runtime. Di Next.js production,
+   file yang ditulis runtime ke public/ TIDAK dilayani sebagai static asset
+   (hanya yang ada saat build). Jadi localUrl (/voiceovers/xxx.mp3) bisa 404
+   walau file ada. Route /api/audio tetap serve dari disk, jadi andalkan itu.
+
+F. src/app/api/audio/[filename]/route.ts:20-27 — cache in-memory di dalam route
+   file. Di Next.js, setiap route bisa punya modul terpisah; storeAudioInMemory
+   dipanggil dari lib (import dari route!) → coupling pathophysiology dan
+   bisa tidak share instance. Selain itu 100 buffer audio (tiap ~1-3 MB) =
+   100-300 MB RAM per instance.
+
+G. src/lib/projects.ts:144-147 & 254-257 — saveUserProjectsList membaca
+   getLocalProjects() lalu menulis seluruh array; pada dua proses server
+   (replica) = data race, yang terakhir tulis menimpa.
+
+H. src/app/api/projects/route.ts:44 — GET tanpa paginasi; array penuh dikirim
+   per request (max 50 per user, ok) tapi tidak ada limit untuk users dengan
+   data legacy.
+
+I. src/lib/auth.ts:60-62 — SESSION_SECRET default dipakai bila env kosong di
+   production. Wajib fail-fast saat boot bila env tidak di-set.
+
+J. src/components/AnimationPlayer/index.tsx:112 — teks "Generating motion
+   animation & voiceover..." selalu tampil saat streaming, walau autoCaption
+   dimatikan / TTS gagal. Menyesatkan.
+
+K. src/app/generate/page.tsx:322-334 — durasi hanya naik (Math.max), tidak
+   pernah turun; audio pendek tidak pernah memendekkan video. Setelah beberapa
+   iterasi, durasi bisa jauh lebih panjang dari yang ditampilkan di landing.
+
+L. src/components/ProjectHistoryModal.tsx — tidak ada penjelasan bahwa proyek
+   & video expired 24 jam (badge "Rendered MP4" masih muncul walau media sudah
+   dihapus → link download mati diam-diam, server balas 404 teks).
+
+M. src/lib/heygen.ts:60-84 — listHeyGenVoices walking max 3 halaman x 100,
+   hanya menyimpan voice yang language-nya match. Kalau HeyGen mengembalikan
+   language dalam format regional ("English (US)"), filter bisa membuang semua
+   (huruf kecil + includes sudah menangani sebagian, tapi "en-US" vs "english"
+   akan gagal).
+
+N. src/app/api/voiceover/route.ts:167-176 — mengembalikan base64AudioUrl
+   (data:audio/mpeg;base64) sebagai bagian response AND dataUrl. Untuk audio
+   5 menit ini ~4-6 MB base64 → response API besar, waste double payload
+   (sudah ada audioUrl). Hapus dataUrl dari response atau jadikan opsional.
+
+O. src/components/ChatSidebar/ChatSidebar.tsx:119 — model state tidak di-lift;
+   setiap mount sidebar kembali ke Opus, jadi user yang sebelumnya pilih Haiku
+   untuk chat cepat kembali ke Opus tanpa diminta.
+
+P. src/app/api/generate/route.ts:352 — parsing cookie manual dengan regex
+   (/swdbot_session=([^;]+)/) di 4+ route, padahal sudah ada
+   req.cookies.get(COOKIE_NAME). Raw value tidak di-decodeURIComponent → cookie
+   berisi karakter ter-encode bisa gagal parse.
+
+Q. src/skills/*.md dimuat via webpack raw-loader/turbopack rule. File
+   teknik.md 45KB + explainer 34KB + opener-konsep 58KB ≈ 200KB prompt
+   potentially setiap request → token cost tinggi. Detect skill Sometimes
+   memilih beberapa skill (extractor + text fallback bisa double-count),
+   menambah prompt еще besar.
+
+
+================================================================================
+PRIORITAS PERBAIKAN
+================================================================================
+
+P0 — HARI INI (security & kerugian uang langsung)
+--------------------------------------------------------------------------------
+ 1. [BUG-01] Hapus fallback SESSION_SECRET + timingSafeEqual + rotasi secret
+ 2. [BUG-02] Hapus jalur auth x-user-api-key; jangan kirim legacy_key ke client
+ 3. [BUG-03] Auth wajib di /api/generate, /api/voiceover, /api/transcribe,
+            /api/lambda/* + rate limit per user & per IP
+ 4. [BUG-06] requireActiveUser(): cek is_blocked + VIP expiry di semua route
+ 5. [BUG-04/05] Fail-closed untuk TURNSTILE_SECRET_KEY & GOOGLE_CLIENT_ID
+ 6. [BUG-07] Validasi sebelum charge + refund saat gagal + batasi auto-retry
+ 7. [BUG-08] Cek AWS credential dulu, charge setelah renderId didapat,
+            implementasikan refundCredits()
+
+P1 — MINGGU INI (workflow rusak & data)
+--------------------------------------------------------------------------------
+ 8. [BUG-11] Partial update di /api/lambda/progress (jangan code:"")
+ 9. [BUG-12] Perbaiki key Supabase (tidak double-encode) + test tulis-baca
+10. [BUG-13] Await semua write Supabase
+11. [BUG-15] isFollowUp berbasis hasGeneratedOnce, bukan messages.length
+12. [BUG-17] Kirim language/aspectRatio/duration/fps/voice di setiap request
+13. [BUG-16] Simpan & teruskan `model` dari landing page
+14. [BUG-19] Prioritaskan apiUrl (same-origin) untuk auto-voiceover
+15. [BUG-14] Gabungkan fetch proyek ganda di /generate
+16. [BUG-18] Simpan history chat apa adanya (summary + metadata), bukan
+            placeholder "[Generated Code]"
+17. [BUG-28] Gate auto-start /generate di authLoaded && user
+18. [BUG-40] Admin: skip reset form saat auto-refresh + interval 15-30 detik
+19. [BUG-41] Simpan tarif/fee saat transaksi terjadi; h停止 hardcode 0.5
+20. [BUG-42] Admin: tampilkan semua user (bukan hanya VIP) + statusBlocked benar
+21. [BUG-43] Hapus daftar email admin dari client; andalkan user.isAdmin
+22. [BUG-56] Tambahkan /data/ ke .gitignore
+23. [BUG-55] Hijaukan npm run lint (72 error)
+
+P2 — MINGGU 2-3 (UI/UX & polish)
+--------------------------------------------------------------------------------
+24. [BUG-25] Render VoiceoverModal (atau hapus) — tombol voiceover hilang
+25. [BUG-26] Render SettingsModal (atau hapus) — durasi/FPS tidak bisa diubah
+26. [BUG-33] AbortController + tombol Cancel render
+27. [BUG-32] Hapus durationInFrames dari Player key (hindari reset playback)
+28. [BUG-31] Jangan kosongkan CodeEditor saat error
+29. [BUG-34] Konfirmasi + tampilkan biaya render (10 Cr) & biaya chat (1 Cr)
+30. [BUG-36] Single HTML: embed video / perbaiki tooltip
+31. [BUG-37] Strip URL S3 dari kode yang di-export
+32. [BUG-29/30] Login: fallback Turnstile, perbaiki teks, stabilkan effect
+33. [BUG-48] Reset runtimeError saat user mengedit kode
+34. [BUG-20] Ganti replace dengan () => new_string
+35. [BUG-22] Perbaiki parser Range header (suffix range)
+36. [BUG-45] Aksesibilitas: focus trap, aria-label, hapus select-none
+37. [BUG-35] Ganti alert/confirm/prompt dengan Dialog + Toast
+38. [BUG-65/66] Status render "failed" + tombol retry + polling di history
+
+P3 — TEKNIS / PERF
+--------------------------------------------------------------------------------
+39. [BUG-20] Regex validasi response & extractComponentCode diperkuat
+40. [BUG-58] Buat middleware.ts terpusat
+41. [BUG-61] Security headers + CSP di next.config.js
+42. [BUG-59] Pisahkan deploy Lambda dari build command
+43. [BUG-38] ZIP streaming / worker agar tidak freeze
+44. [BUG-62] next/image untuk logo & gallery
+45. [BUG-63] Flag lokal untuk dropdown bahasa
+46. [BUG-39] Bersihkan karakter U+FFFD dari seluruh source + .env.example
+47. [BUG-60] Tulis ulang .env.example sesuai stack Anthropic
+48. [BUG-51] Absolute session expiry (tidak sliding tanpa batas)
+49. [BUG-50] Hapus legacy_key dari localStorage
+50. [BUG-52] Cache header untuk /api/config
+51. [BUG-57] src/data/*.json masuk .gitignore
+52. [BUG-24] Pindahkan cleanup scheduler ke instrumentation/cron
+53. [BUG-23] Ownership check untuk /api/media & /api/audio
+54. Ringkasan tambahan: A, B, C, D, E, F, G, I, J, K, L, M, N, O, P, Q
+
+
+================================================================================
+CATATAN UNTUK PENGEMBANGAN
+================================================================================
+- TypeScript: LULUS (tsc --noEmit 0 error). Jadi semua bug di atas adalah bug
+  logika/contract/UX, bukan typo tipe.
+- Tidak ada satu pun test otomatis di repo (tidak ada jestest/vitest/playwright,
+  tidak ada folder __tests__). Untuk auth, billing, dan parsing Range, ini
+  berisiko tinggi. Rekomendasi: tambahkan minimal unit test untuk
+  verifySessionToken, chargeUserCredits, parser Range, dan applyEdits.
+-argetkan unit test untuk BUG-12 (tulis-baca Supabase) sebelum deploy ulang,
+  karena bug itu diam-diam Ongoing merusakkan data user.
+- next.config.js perlu attention: dokumentasi AGENTS.md menyebutkan Next 16
+  breaking changes; pastikan perubahan headers() mengikuti API Next 16.
+- Setelah fix BUG-01, paksa logout semua user (rotasi secret) karena token
+  lama masih diterma fallback lama di browser yang sudah login.
+
+================================================================================
+AKHIR DOKUMEN
+================================================================================

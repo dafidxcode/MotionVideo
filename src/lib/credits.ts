@@ -21,7 +21,7 @@ export interface MotionStudioActivity {
   userEmail: string;
   userName: string;
   userAvatar?: string;
-  action: "initial_generation" | "chatbot_llm" | "aws_render";
+  action: "initial_generation" | "chatbot_llm" | "aws_render" | "refund";
   credits: number;
   remainingQuota: number;
   description: string;
@@ -244,20 +244,70 @@ export async function logMotionActivity(
 }
 
 // ── Charge User Credits & Supabase Synchronization ──────────────────────────
-export async function chargeUserCredits(options: {
+
+/**
+ * Per-email async mutex (BUG-09).
+ *
+ * `chargeUserCredits` previously did read-modify-write on the Supabase quota
+ * with no serialization, so two concurrent generations could both read the same
+ * `currentQuota`, both pass the `currentQuota < cost` check and both PATCH the
+ * same `newQuota` — the user is charged once while getting twice the work.
+ */
+const chargeLocks = new Map<string, Promise<void>>();
+
+async function withChargeLock<T>(email: string, fn: () => Promise<T>): Promise<T> {
+  const key = email.toLowerCase().trim();
+  const previous = chargeLocks.get(key) ?? Promise.resolve();
+
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const tail = previous.then(
+    () => gate,
+    () => gate,
+  );
+  chargeLocks.set(key, tail);
+
+  try {
+    await previous.catch(() => {});
+    return await fn();
+  } finally {
+    release();
+    void tail.then(() => {
+      if (chargeLocks.get(key) === tail) chargeLocks.delete(key);
+    });
+  }
+}
+
+export interface ChargeUserCreditsOptions {
   email: string;
   action: "initial_generation" | "chatbot_llm" | "aws_render";
   overrideAmount?: number;
   description?: string;
-  metadata?: Record<string, any>;
-}): Promise<{
+  metadata?: Record<string, unknown>;
+}
+
+export async function chargeUserCredits(
+  options: ChargeUserCreditsOptions,
+): Promise<ChargeResult> {
+  // BUG-09: serialize concurrent charges for the same account so the
+  // read-modify-write below cannot interleave.
+  return withChargeLock(options.email, () => chargeUserCreditsLocked(options));
+}
+
+export type ChargeResult = {
   success: boolean;
   error?: string;
   chargedAmount: number;
   previousQuota: number;
   newQuota: number;
   profile?: SwdbotUserProfile;
-}> {
+};
+
+async function chargeUserCreditsLocked(
+  options: ChargeUserCreditsOptions,
+): Promise<ChargeResult> {
   const { email, action, overrideAmount, description, metadata } = options;
   const settings = await getMotionStudioSettings();
 
@@ -266,7 +316,7 @@ export async function chargeUserCredits(options: {
   if (typeof overrideAmount === "number" && overrideAmount >= 0) {
     cost = overrideAmount;
   } else if (action === "initial_generation") {
-    const durationSeconds = metadata?.durationSeconds || 10;
+    const durationSeconds = Number(metadata?.durationSeconds) || 10;
     const baseRate = settings.initialGenerationCost || 2;
     cost = Math.max(baseRate, Math.round((durationSeconds / 10) * baseRate));
   } else if (action === "chatbot_llm") {
@@ -318,18 +368,24 @@ export async function chargeUserCredits(options: {
   const newQuota = Math.max(0, Math.round((currentQuota - cost) * 1000) / 1000);
 
   // 1. Update Supabase public.profiles table
+  //    BUG-09 (compare-and-set): the PATCH is guarded by the quota we actually
+  //    read. If another process changed the row in between, the filter matches
+  //    zero rows and we report failure instead of silently clobbering it.
   const { supabaseUrl, apiKey } = getSupabaseConfig();
   if (apiKey && profile.id) {
+    let casApplied = true;
     try {
       const patchRes = await fetch(
-        `${supabaseUrl}/rest/v1/profiles?id=eq.${profile.id}`,
+        `${supabaseUrl}/rest/v1/profiles?id=eq.${encodeURIComponent(
+          profile.id,
+        )}&quota=eq.${encodeURIComponent(String(currentQuota))}`,
         {
           method: "PATCH",
           headers: {
             apikey: apiKey,
             Authorization: `Bearer ${apiKey}`,
             "Content-Type": "application/json",
-            Prefer: "return=minimal",
+            Prefer: "return=representation",
           },
           body: JSON.stringify({
             quota: newQuota,
@@ -343,9 +399,31 @@ export async function chargeUserCredits(options: {
           patchRes.status,
           await patchRes.text(),
         );
+        casApplied = false;
+      } else {
+        const updated = await patchRes.json().catch(() => null);
+        if (Array.isArray(updated) && updated.length === 0) {
+          casApplied = false;
+          console.error(
+            `[Credits] Concurrent quota change detected for ${email}; charge aborted.`,
+          );
+        }
       }
     } catch (err) {
       console.error("[Credits] Error updating Supabase profile quota:", err);
+      casApplied = false;
+    }
+
+    if (!casApplied) {
+      return {
+        success: false,
+        error:
+          "Could not deduct credits because your balance changed concurrently. Please retry.",
+        chargedAmount: 0,
+        previousQuota: currentQuota,
+        newQuota: currentQuota,
+        profile,
+      };
     }
   }
 
@@ -427,6 +505,85 @@ export async function chargeUserCredits(options: {
   };
 }
 
+/**
+ * Give credits back when a charged action fails downstream (BUG-07 / BUG-08).
+ *
+ * Must be called with the exact amount that was charged so a failed generation
+ * or render never leaves the user poorer.
+ */
+export async function refundUserCredits(options: {
+  email: string;
+  amount: number;
+  reason?: string;
+  metadata?: Record<string, any>;
+}): Promise<{ success: boolean; newQuota: number }> {
+  const { email, amount, reason, metadata } = options;
+  if (!Number.isFinite(amount) || amount <= 0) {
+    return { success: false, newQuota: 0 };
+  }
+
+  return withChargeLock(email, async () => {
+    const profile = await getSwdbotProfileByEmail(email);
+    if (!profile || !profile.id) {
+      console.error(`[Credits] Refund skipped: profile not found for ${email}`);
+      return { success: false, newQuota: 0 };
+    }
+
+    const currentQuota = Math.round((Number(profile.quota) || 0) * 1000) / 1000;
+    const newQuota = Math.round((currentQuota + amount) * 1000) / 1000;
+
+    const { supabaseUrl, apiKey } = getSupabaseConfig();
+    if (!apiKey) {
+      console.error("[Credits] Refund skipped: Supabase API key missing.");
+      return { success: false, newQuota: currentQuota };
+    }
+
+    try {
+      const patchRes = await fetch(
+        `${supabaseUrl}/rest/v1/profiles?id=eq.${encodeURIComponent(profile.id)}`,
+        {
+          method: "PATCH",
+          headers: {
+            apikey: apiKey,
+            Authorization: `Bearer ${apiKey}`,
+            "Content-Type": "application/json",
+            Prefer: "return=minimal",
+          },
+          body: JSON.stringify({
+            quota: newQuota,
+            updated_at: new Date().toISOString(),
+          }),
+        },
+      );
+      if (!patchRes.ok) {
+        console.error(
+          "[Credits] Refund patch failed:",
+          patchRes.status,
+          await patchRes.text(),
+        );
+        return { success: false, newQuota: currentQuota };
+      }
+    } catch (err) {
+      console.error("[Credits] Refund failed:", err);
+      return { success: false, newQuota: currentQuota };
+    }
+
+    await logMotionActivity({
+      userEmail: profile.email,
+      userName: profile.name || profile.email.split("@")[0],
+      userAvatar: profile.avatar_url,
+      action: "refund",
+      credits: amount,
+      remainingQuota: newQuota,
+      description: reason || "Refund issued for a failed action",
+      status: "success",
+      metadata: { ...metadata, refunded: true, previousQuota: currentQuota },
+    }).catch(() => {});
+
+    return { success: true, newQuota };
+  });
+}
+
 // ── Admin Panel Aggregated Statistics ───────────────────────────────────────
 export async function getMotionStudioStats(): Promise<{
   totalUsers: number;
@@ -447,6 +604,7 @@ export async function getMotionStudioStats(): Promise<{
   let developerFeeCollectedRM = 0;
 
   for (const act of activities) {
+    if (act.action === "refund") continue;
     if (act.status === "success") {
       totalCreditsCharged += Number(act.credits) || 0;
       if (act.action === "initial_generation") totalGenerations++;
@@ -499,8 +657,9 @@ export async function getAllProfilesForAdmin(): Promise<SwdbotUserProfile[]> {
   if (!apiKey) return [];
 
   try {
+    // BUG-42: Return all user profiles so admin can manage non-VIP and blocked users
     const res = await fetch(
-      `${supabaseUrl}/rest/v1/profiles?vip=eq.true&order=created_at.desc&limit=500`,
+      `${supabaseUrl}/rest/v1/profiles?order=created_at.desc&limit=500`,
       {
         headers: { apikey: apiKey, Authorization: `Bearer ${apiKey}` },
         cache: "no-store",
@@ -509,19 +668,11 @@ export async function getAllProfilesForAdmin(): Promise<SwdbotUserProfile[]> {
     if (res.ok) {
       const rows = await res.json();
       if (Array.isArray(rows)) {
-        // Strictly return only active VIP users
-        return rows.filter((u: SwdbotUserProfile) => {
-          if (!u.vip) return false;
-          if (u.vip_expires_at) {
-            const exp = new Date(u.vip_expires_at).getTime();
-            if (!isNaN(exp) && exp <= Date.now()) return false;
-          }
-          return true;
-        });
+        return rows;
       }
     }
   } catch (err) {
-    console.error("[Credits] Failed to fetch VIP profiles for admin:", err);
+    console.error("[Credits] Failed to fetch profiles for admin:", err);
   }
   return [];
 }

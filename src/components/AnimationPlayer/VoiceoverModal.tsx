@@ -178,7 +178,9 @@ export function VoiceoverModal({
   const [language, setLanguage] = useState<VoiceLanguageCode>(() =>
     isVoiceLanguageCode(initialLanguage) ? initialLanguage : "en",
   );
-  const voiceModel: VoiceEngineId = isVoiceEngineId(initialVoiceModel) ? initialVoiceModel : "auto";
+  const [voiceModel, setVoiceModel] = useState<VoiceEngineId>(() =>
+    isVoiceEngineId(initialVoiceModel) ? initialVoiceModel : "auto",
+  );
   const [selectedVoice, setSelectedVoice] = useState(initialVoice);
   const [voices, setVoices] = useState<VoiceOption[]>([]);
   const [voicesLoading, setVoicesLoading] = useState(false);
@@ -281,7 +283,8 @@ export function VoiceoverModal({
         throw new Error(data.error || "Failed to generate voiceover audio.");
       }
 
-      setGeneratedAudioUrl(data.fileUrl || data.remoteAudioUrl || data.audioUrl);
+      // BUG-19: Prioritize same-origin stream route (/api/audio/...)
+      setGeneratedAudioUrl(data.apiUrl || data.fileUrl || data.audioUrl || data.remoteAudioUrl);
       if (data.words && Array.isArray(data.words)) {
         setWords(data.words);
       }
@@ -395,29 +398,48 @@ export function VoiceoverModal({
             </p>
           </div>
 
-          {/* Language + Voice Model */}
-          {/* Narration Language Selection */}
-          <div className="flex flex-col gap-2">
-            <div className="flex items-center justify-between">
+          {/* Language & Voice Model Engine Selection */}
+          <div className="grid grid-cols-2 gap-3">
+            <div className="flex flex-col gap-1.5">
               <label
                 htmlFor="voice-language-select"
                 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground"
               >
-                Narration
+                Language
               </label>
+              <select
+                id="voice-language-select"
+                value={language}
+                onChange={(e) => setLanguage(e.target.value as VoiceLanguageCode)}
+                className="w-full h-9 px-2.5 rounded-lg border border-border bg-input text-foreground text-xs font-sans focus:outline-none focus:border-primary cursor-pointer"
+              >
+                {VOICE_LANGUAGES.map((l) => (
+                  <option key={l.id} value={l.id}>
+                    {l.label}
+                  </option>
+                ))}
+              </select>
             </div>
-            <select
-              id="voice-language-select"
-              value={language}
-              onChange={(e) => setLanguage(e.target.value as VoiceLanguageCode)}
-              className="w-full h-9 px-2.5 rounded-lg border border-border bg-input text-foreground text-xs font-sans focus:outline-none focus:border-primary cursor-pointer"
-            >
-              {VOICE_LANGUAGES.map((l) => (
-                <option key={l.id} value={l.id}>
-                  {l.label}
-                </option>
-              ))}
-            </select>
+
+            <div className="flex flex-col gap-1.5">
+              <label
+                htmlFor="voice-engine-select"
+                className="text-xs font-semibold uppercase tracking-wider text-muted-foreground"
+              >
+                Server
+              </label>
+              <select
+                id="voice-engine-select"
+                value={voiceModel}
+                onChange={(e) => setVoiceModel(e.target.value as VoiceEngineId)}
+                className="w-full h-9 px-2.5 rounded-lg border border-border bg-input text-foreground text-xs font-sans focus:outline-none focus:border-primary cursor-pointer"
+              >
+                <option value="auto">Auto</option>
+                <option value="starfish">Starfish</option>
+                <option value="orca">Orca</option>
+                <option value="elevenlabs">ElevenLabs</option>
+              </select>
+            </div>
           </div>
 
           {/* SwdVoice Voice Selector */}

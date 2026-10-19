@@ -1,8 +1,5 @@
 import * as Babel from "@babel/standalone";
-let Lottie: any = () => null;
-try {
-  Lottie = require("@remotion/lottie")?.Lottie || (() => null);
-} catch {}
+import { Lottie } from "@remotion/lottie";
 import * as RemotionShapes from "@remotion/shapes";
 import { ThreeCanvas } from "@remotion/three";
 import {

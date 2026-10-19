@@ -182,12 +182,14 @@ export function useGenerationApi(): UseGenerationApiReturn {
         if (contentType.includes("application/json")) {
           const data = await response.json();
           const { code, summary, metadata } = data;
-          onCodeGenerated?.(code);
-          onGenerationComplete?.(code, summary, metadata);
           const validation = validateGptResponse(code);
           if (!validation.isValid && validation.error) {
             onError?.(validation.error, "validation");
+            onErrorMessage?.(validation.error, "validation");
+            return;
           }
+          onCodeGenerated?.(code);
+          onGenerationComplete?.(code, summary, metadata);
           return;
         }
 
@@ -258,6 +260,14 @@ export function useGenerationApi(): UseGenerationApiReturn {
 
         let finalCode = stripMarkdownFences(accumulatedText);
         finalCode = extractComponentCode(finalCode);
+
+        const validation = validateGptResponse(finalCode);
+        if (!validation.isValid && validation.error) {
+          onError?.(validation.error, "validation");
+          onErrorMessage?.(validation.error, "validation");
+          return;
+        }
+
         onCodeGenerated?.(finalCode);
         onClearPendingMessage?.();
         onGenerationComplete?.(
@@ -265,11 +275,6 @@ export function useGenerationApi(): UseGenerationApiReturn {
           undefined,
           streamMetadata.skills?.length ? streamMetadata : undefined,
         );
-
-        const validation = validateGptResponse(finalCode);
-        if (!validation.isValid && validation.error) {
-          onError?.(validation.error, "validation");
-        }
       } catch (error) {
         console.warn("Error generating code:", error);
         const errorMessage =

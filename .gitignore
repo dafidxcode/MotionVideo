@@ -55,3 +55,10 @@ Thumbs.db
 .vscode/
 *.swp
 *.swo
+
+# Local runtime data & caches (BUG-56 / BUG-57)
+/data/
+data/
+/src/data/*.json
+!/src/data/bangMotionStyles.ts
+!/src/data/examplePrompts.ts

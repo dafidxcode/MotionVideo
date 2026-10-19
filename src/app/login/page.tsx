@@ -63,16 +63,27 @@ export default function LoginPage() {
   }, []);
 
   // 2. Cloudflare Turnstile Init
+  const [turnstileFailed, setTurnstileFailed] = useState(false);
+  const [turnstileKey, setTurnstileKey] = useState(0);
+
   useEffect(() => {
     if (!config) return;
+
+    const sitekey = config.turnstileSitekey?.trim();
+    if (!sitekey) {
+      console.warn("Turnstile sitekey is not configured, skipping challenge check.");
+      setIsVerified(true);
+      return;
+    }
+
     let widgetId: any = null;
+    let attempts = 0;
+    const maxAttempts = 15;
 
     const renderTurnstile = () => {
       if ((window as any).turnstile && turnstileContainerRef.current) {
         try {
           turnstileContainerRef.current.innerHTML = "";
-          const sitekey = config.turnstileSitekey;
-
           widgetId = (window as any).turnstile.render(
             turnstileContainerRef.current,
             {
@@ -82,10 +93,12 @@ export default function LoginPage() {
               size: "normal",
               callback: (token: string) => {
                 turnstileTokenRef.current = token;
+                setTurnstileFailed(false);
                 setIsVerified(true);
               },
               "error-callback": () => {
                 turnstileTokenRef.current = "";
+                setTurnstileFailed(true);
                 setIsVerified(false);
               },
               "expired-callback": () => {
@@ -96,6 +109,7 @@ export default function LoginPage() {
           );
         } catch (e) {
           console.error("Turnstile render error:", e);
+          setTurnstileFailed(true);
         }
       }
     };
@@ -119,12 +133,19 @@ export default function LoginPage() {
     }
 
     const checkInterval = setInterval(() => {
+      attempts++;
       if (
         (window as any).turnstile &&
         turnstileContainerRef.current &&
         widgetId === null
       ) {
         renderTurnstile();
+      }
+      if (attempts >= maxAttempts || widgetId !== null) {
+        clearInterval(checkInterval);
+        if (widgetId === null && !(window as any).turnstile) {
+          setTurnstileFailed(true);
+        }
       }
     }, 200);
 
@@ -136,7 +157,7 @@ export default function LoginPage() {
         } catch { }
       }
     };
-  }, [config]);
+  }, [config, turnstileKey]);
 
   // 3. Google Sign-In SDK Button rendering (only after Turnstile passes)
   useEffect(() => {
@@ -180,8 +201,7 @@ export default function LoginPage() {
             const btnEl =
               googleBtnRef.current ||
               document.getElementById("google-login-btn");
-            if (btnEl) {
-              btnEl.innerHTML = "";
+            if (btnEl && !btnEl.hasChildNodes()) {
               (window as any).google.accounts.id.renderButton(btnEl, {
                 theme: "filled_black",
                 size: "large",
@@ -194,7 +214,6 @@ export default function LoginPage() {
           };
 
           renderBtn();
-          setTimeout(renderBtn, 200);
         } catch (err) {
           console.error("Google Sign-In initialization failed:", err);
         }
@@ -335,7 +354,7 @@ export default function LoginPage() {
               <div key="loading-state" className="flex flex-col items-center justify-center gap-2.5 py-4 w-full animate-fade-in">
                 <div className="w-6 h-6 border-2 border-amber-400 border-t-transparent rounded-full animate-spin" />
                 <span className="text-xs text-neutral-300 font-medium">
-                  Verifyin Swdbot VIP status...
+                  Verifying ...
                 </span>
               </div>
             )}
@@ -356,6 +375,15 @@ export default function LoginPage() {
                 id="turnstile-login-container"
                 className="my-1 flex items-center justify-center min-h-[65px] w-full"
               />
+              {turnstileFailed && (
+                <button
+                  type="button"
+                  onClick={() => setTurnstileKey((k) => k + 1)}
+                  className="px-2.5 py-1 text-xs text-amber-400 hover:text-amber-300 bg-amber-500/10 border border-amber-500/30 rounded-lg transition-colors"
+                >
+                  Retry
+                </button>
+              )}
               <span className="text-[9px] text-[#6E6E76]">
                 Protected by Cloudflare
               </span>

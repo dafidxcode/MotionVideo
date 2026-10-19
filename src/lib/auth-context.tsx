@@ -8,7 +8,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { useRouter, usePathname } from "next/navigation";
+import { useRouter } from "next/navigation";
 import type { SwdbotSessionUser } from "./auth";
 
 interface AuthContextType {
@@ -28,13 +28,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<SwdbotSessionUser | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const router = useRouter();
-  const pathname = usePathname();
 
   const refreshUser = useCallback(async () => {
     try {
-      const storedKey = localStorage.getItem("swdbot_user_api_key") || "";
+      // BUG-02: no `x-user-api-key` header and no key in localStorage.
+      // The httpOnly session cookie is the only credential.
       const res = await fetch("/api/auth/me", {
-        headers: storedKey ? { "x-user-api-key": storedKey } : {},
         cache: "no-store",
       });
 
@@ -42,8 +41,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         const data = await res.json();
         if (data.authenticated && data.user) {
           setUser(data.user);
-          localStorage.setItem("swdbot_user_api_key", data.user.key);
-          localStorage.setItem("swdbot_user_info", JSON.stringify(data.user));
+          // BUG-50: Strip key before persisting to localStorage (prevent credential leakage to localStorage)
+          const { key: _key, ...safeUser } = data.user;
+          localStorage.setItem("swdbot_user_info", JSON.stringify(safeUser));
           return;
         }
       }
@@ -53,7 +53,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setUser(null);
         localStorage.removeItem("swdbot_user_api_key");
         localStorage.removeItem("swdbot_user_info");
-        if (pathname !== "/login") {
+        if (typeof window !== "undefined" && window.location.pathname !== "/login") {
           router.push("/login");
         }
       }
@@ -62,7 +62,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     } finally {
       setIsLoading(false);
     }
-  }, [pathname, router]);
+  }, [router]);
 
   useEffect(() => {
     // Initial load: check localStorage for instant response
@@ -101,39 +101,44 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => clearInterval(interval);
   }, [user, refreshUser]);
 
-  const login = async (
-    credential: string,
-    turnstileToken?: string,
-  ): Promise<{ success: boolean; error?: string; status?: string }> => {
-    try {
-      const res = await fetch("/api/auth/google", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ credential, turnstileToken }),
-      });
+  const login = useCallback(
+    async (
+      credential: string,
+      turnstileToken?: string,
+    ): Promise<{ success: boolean; error?: string; status?: string }> => {
+      try {
+        const res = await fetch("/api/auth/google", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ credential, turnstileToken }),
+        });
 
-      const data = await res.json();
-      if (res.ok && data.success && data.user) {
-        setUser(data.user);
-        localStorage.setItem("swdbot_user_api_key", data.user.key);
-        localStorage.setItem("swdbot_user_info", JSON.stringify(data.user));
-        return { success: true };
+        const data = await res.json();
+        if (res.ok && data.success && data.user) {
+          setUser(data.user);
+          // BUG-02 & BUG-50: the legacy API key is never persisted to localStorage.
+          localStorage.removeItem("swdbot_user_api_key");
+          const { key: _key, ...safeUser } = data.user;
+          localStorage.setItem("swdbot_user_info", JSON.stringify(safeUser));
+          return { success: true };
+        }
+
+        return {
+          success: false,
+          error: data.error || "Login failed. Please try again.",
+          status: data.status,
+        };
+      } catch (err: any) {
+        return {
+          success: false,
+          error: "Failed to connect to authentication server.",
+        };
       }
+    },
+    [],
+  );
 
-      return {
-        success: false,
-        error: data.error || "Login failed. Please try again.",
-        status: data.status,
-      };
-    } catch (err: any) {
-      return {
-        success: false,
-        error: "Failed to connect to authentication server.",
-      };
-    }
-  };
-
-  const logout = async () => {
+  const logout = useCallback(async () => {
     try {
       await fetch("/api/auth/logout", { method: "POST" });
     } catch { }
@@ -141,7 +146,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     localStorage.removeItem("swdbot_user_api_key");
     localStorage.removeItem("swdbot_user_info");
     router.push("/login");
-  };
+  }, [router]);
 
   return (
     <AuthContext.Provider

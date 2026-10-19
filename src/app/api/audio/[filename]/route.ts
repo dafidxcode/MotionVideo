@@ -1,6 +1,7 @@
 import fs from "fs/promises";
 import path from "path";
 import { NextRequest, NextResponse } from "next/server";
+import { parseHttpRange } from "@/lib/http-range";
 
 // In-memory cache for ultra-fast audio streaming
 const audioMemoryCache = new Map<string, { buffer: Buffer; contentType: string }>();
@@ -77,17 +78,15 @@ export async function GET(
   headers.set("Accept-Ranges", "bytes");
   headers.set("Cache-Control", "public, max-age=604800, immutable");
 
-  // Handle HTTP Range requests for seamless audio seeking & Safari compatibility
+  // Handle HTTP Range requests for seamless audio seeking & Safari compatibility (BUG-22)
   if (rangeHeader) {
-    const parts = rangeHeader.replace(/bytes=/, "").split("-");
-    const start = parseInt(parts[0], 10);
-    const end = parts[1] ? parseInt(parts[1], 10) : fileSize - 1;
-
-    if (start >= fileSize || end >= fileSize || start > end) {
+    const range = parseHttpRange(rangeHeader, fileSize);
+    if (!range) {
       headers.set("Content-Range", `bytes */${fileSize}`);
       return new NextResponse(null, { status: 416, headers });
     }
 
+    const { start, end } = range;
     const chunk = audioBuffer.subarray(start, end + 1);
     headers.set("Content-Range", `bytes ${start}-${end}/${fileSize}`);
     headers.set("Content-Length", String(chunk.length));

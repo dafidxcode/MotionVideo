@@ -62,6 +62,12 @@ function saveLocalProjects(projects: MotionProject[]) {
   } catch {}
 }
 
+function getUserProjectsCacheKey(email: string): string {
+  // BUG-12: Replace '@' and URL-special characters with '__at__' and safe chars
+  // so PostgREST's query-string decoding matches the exact stored key in provider_cache.
+  return `user_projects_${email.toLowerCase().trim().replace(/@/g, "__at__").replace(/[^a-zA-Z0-9_-]/g, "_")}`;
+}
+
 export const PROJECT_RETENTION_MS = 24 * 60 * 60 * 1000; // 24 hours
 
 /**
@@ -74,12 +80,12 @@ export async function getUserProjects(userEmail: string): Promise<MotionProject[
 
   let projectsList: MotionProject[] = [];
 
-  // 1. Try Supabase provider_cache with key `user_projects_${normalizedEmail}`
+  // 1. Try Supabase provider_cache with safe key (BUG-12)
   if (apiKey) {
     try {
-      const cacheKey = `user_projects_${encodeURIComponent(normalizedEmail)}`;
+      const cacheKey = getUserProjectsCacheKey(normalizedEmail);
       const res = await fetch(
-        `${supabaseUrl}/rest/v1/provider_cache?key=eq.${cacheKey}&select=payload`,
+        `${supabaseUrl}/rest/v1/provider_cache?key=eq.${encodeURIComponent(cacheKey)}&select=payload`,
         {
           headers: { apikey: apiKey, Authorization: `Bearer ${apiKey}` },
           cache: "no-store",
@@ -90,6 +96,8 @@ export async function getUserProjects(userEmail: string): Promise<MotionProject[
         if (Array.isArray(rows) && Array.isArray(rows[0]?.payload)) {
           projectsList = rows[0].payload as MotionProject[];
         }
+      } else {
+        console.warn(`[Projects] Supabase fetch responded with status ${res.status}`);
       }
     } catch (err) {
       console.warn("[Projects] Supabase fetch error, fallback to local:", err);
@@ -118,33 +126,45 @@ export async function getUserProjects(userEmail: string): Promise<MotionProject[
   );
 }
 
-async function saveUserProjectsList(userEmail: string, list: MotionProject[]) {
+async function saveUserProjectsList(userEmail: string, list: MotionProject[]): Promise<void> {
   const normalizedEmail = userEmail.toLowerCase().trim();
   const now = new Date().toISOString();
   const { supabaseUrl, apiKey } = getSupabaseConfig();
 
-  if (apiKey) {
-    const cacheKey = `user_projects_${encodeURIComponent(normalizedEmail)}`;
-    fetch(`${supabaseUrl}/rest/v1/provider_cache`, {
-      method: "POST",
-      headers: {
-        apikey: apiKey,
-        Authorization: `Bearer ${apiKey}`,
-        "Content-Type": "application/json",
-        Prefer: "resolution=merge-duplicates",
-      },
-      body: JSON.stringify({
-        key: cacheKey,
-        payload: list,
-        fetched_at: now,
-      }),
-    }).catch(() => {});
-  }
-
+  // Save to local cache first as reliable write-behind fallback
   const allLocal = getLocalProjects().filter(
     (p) => p.userEmail.toLowerCase().trim() !== normalizedEmail,
   );
   saveLocalProjects([...list, ...allLocal]);
+
+  // BUG-13: Await Supabase writes with explicit logging instead of fire-and-forget
+  if (apiKey) {
+    const cacheKey = getUserProjectsCacheKey(normalizedEmail);
+    try {
+      const res = await fetch(`${supabaseUrl}/rest/v1/provider_cache`, {
+        method: "POST",
+        headers: {
+          apikey: apiKey,
+          Authorization: `Bearer ${apiKey}`,
+          "Content-Type": "application/json",
+          Prefer: "resolution=merge-duplicates",
+        },
+        body: JSON.stringify({
+          key: cacheKey,
+          payload: list,
+          fetched_at: now,
+        }),
+      });
+      if (!res.ok) {
+        console.error(
+          `[Projects] Failed to persist projects to Supabase (HTTP ${res.status}):`,
+          await res.text(),
+        );
+      }
+    } catch (err) {
+      console.error("[Projects] Network error saving projects to Supabase:", err);
+    }
+  }
 }
 
 /**
@@ -181,39 +201,45 @@ export async function getProjectById(
 /**
  * Save or update a project
  */
+/**
+ * Save or update a project
+ */
 export async function saveUserProject(
-  projectData: Partial<MotionProject> & { userEmail: string; code: string; prompt: string },
+  projectData: Partial<MotionProject> & { userEmail: string; code?: string; prompt?: string },
 ): Promise<MotionProject> {
   const normalizedEmail = projectData.userEmail.toLowerCase().trim();
   const existingList = await getUserProjects(normalizedEmail);
 
   const now = new Date().toISOString();
   const projectId = projectData.id || `proj_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+  const existingIndex = existingList.findIndex((p) => p.id === projectId);
+  const existing = existingIndex >= 0 ? existingList[existingIndex] : null;
 
-  // Generate clean title if not provided
+  // Generate clean title if not provided, avoiding clobbering with fallback if existing has one
+  const prompt = projectData.prompt !== undefined && projectData.prompt !== "" ? projectData.prompt : (existing?.prompt || "");
+  const code = projectData.code !== undefined && projectData.code !== "" ? projectData.code : (existing?.code || "");
   const title =
     projectData.title ||
-    projectData.prompt.slice(0, 45).replace(/\n/g, " ") ||
+    existing?.title ||
+    prompt.slice(0, 45).replace(/\n/g, " ") ||
     "Motion Graphics Project";
-
-  const existingIndex = existingList.findIndex((p) => p.id === projectId);
 
   const savedProject: MotionProject = {
     id: projectId,
     userEmail: normalizedEmail,
     title,
-    prompt: projectData.prompt,
-    code: projectData.code,
-    styleId: projectData.styleId || existingList[existingIndex]?.styleId,
-    durationInFrames: projectData.durationInFrames ?? existingList[existingIndex]?.durationInFrames ?? 300,
-    fps: projectData.fps ?? existingList[existingIndex]?.fps ?? 30,
-    conversationHistory: projectData.conversationHistory ?? existingList[existingIndex]?.conversationHistory ?? [],
-    renderStatus: projectData.renderStatus ?? existingList[existingIndex]?.renderStatus ?? "idle",
-    renderId: projectData.renderId ?? existingList[existingIndex]?.renderId,
-    renderBucket: projectData.renderBucket ?? existingList[existingIndex]?.renderBucket,
-    renderUrl: projectData.renderUrl ?? existingList[existingIndex]?.renderUrl,
-    renderSize: projectData.renderSize ?? existingList[existingIndex]?.renderSize,
-    createdAt: existingIndex >= 0 ? existingList[existingIndex].createdAt : now,
+    prompt,
+    code,
+    styleId: projectData.styleId || existing?.styleId,
+    durationInFrames: projectData.durationInFrames ?? existing?.durationInFrames ?? 300,
+    fps: projectData.fps ?? existing?.fps ?? 30,
+    conversationHistory: projectData.conversationHistory ?? existing?.conversationHistory ?? [],
+    renderStatus: projectData.renderStatus ?? existing?.renderStatus ?? "idle",
+    renderId: projectData.renderId ?? existing?.renderId,
+    renderBucket: projectData.renderBucket ?? existing?.renderBucket,
+    renderUrl: projectData.renderUrl ?? existing?.renderUrl,
+    renderSize: projectData.renderSize ?? existing?.renderSize,
+    createdAt: existing ? existing.createdAt : now,
     updatedAt: now,
   };
 
@@ -230,33 +256,47 @@ export async function saveUserProject(
     updatedList = updatedList.slice(0, 50);
   }
 
-  // Save to Supabase
-  const { supabaseUrl, apiKey } = getSupabaseConfig();
-  if (apiKey) {
-    const cacheKey = `user_projects_${encodeURIComponent(normalizedEmail)}`;
-    fetch(`${supabaseUrl}/rest/v1/provider_cache`, {
-      method: "POST",
-      headers: {
-        apikey: apiKey,
-        Authorization: `Bearer ${apiKey}`,
-        "Content-Type": "application/json",
-        Prefer: "resolution=merge-duplicates",
-      },
-      body: JSON.stringify({
-        key: cacheKey,
-        payload: updatedList,
-        fetched_at: now,
-      }),
-    }).catch((err) => console.warn("[Projects] Supabase save error:", err));
-  }
-
-  // Save to local cache
-  const allLocal = getLocalProjects().filter(
-    (p) => p.userEmail.toLowerCase().trim() !== normalizedEmail,
-  );
-  saveLocalProjects([...updatedList, ...allLocal]);
+  // Save to Supabase and local cache using consolidated writer (BUG-12 + BUG-13)
+  await saveUserProjectsList(normalizedEmail, updatedList);
 
   return savedProject;
+}
+
+/**
+ * Partially update an existing project without overwriting code/prompt with empty strings (BUG-11).
+ * Guards against creating orphan ghost projects if projectId does not belong to the user.
+ */
+export async function updatePartialProject(
+  userEmail: string,
+  projectId: string,
+  patch: Partial<MotionProject>,
+): Promise<MotionProject | null> {
+  const normalizedEmail = userEmail.toLowerCase().trim();
+  const existingList = await getUserProjects(normalizedEmail);
+  const existingIndex = existingList.findIndex((p) => p.id === projectId);
+
+  if (existingIndex < 0) {
+    console.warn(
+      `[Projects] updatePartialProject skipped: project "${projectId}" not found for "${normalizedEmail}".`,
+    );
+    return null;
+  }
+
+  const existing = existingList[existingIndex];
+  const updatedProject: MotionProject = {
+    ...existing,
+    ...patch,
+    title: patch.title !== undefined && patch.title !== "" ? patch.title : existing.title,
+    code: patch.code !== undefined && patch.code !== "" ? patch.code : existing.code,
+    prompt: patch.prompt !== undefined && patch.prompt !== "" ? patch.prompt : existing.prompt,
+    updatedAt: new Date().toISOString(),
+  };
+
+  const updatedList = [...existingList];
+  updatedList[existingIndex] = updatedProject;
+
+  await saveUserProjectsList(normalizedEmail, updatedList);
+  return updatedProject;
 }
 
 /**
@@ -270,28 +310,6 @@ export async function deleteUserProject(
   const existingList = await getUserProjects(normalizedEmail);
   const updatedList = existingList.filter((p) => p.id !== projectId);
 
-  const now = new Date().toISOString();
-  const { supabaseUrl, apiKey } = getSupabaseConfig();
-  if (apiKey) {
-    const cacheKey = `user_projects_${encodeURIComponent(normalizedEmail)}`;
-    await fetch(`${supabaseUrl}/rest/v1/provider_cache`, {
-      method: "POST",
-      headers: {
-        apikey: apiKey,
-        Authorization: `Bearer ${apiKey}`,
-        "Content-Type": "application/json",
-        Prefer: "resolution=merge-duplicates",
-      },
-      body: JSON.stringify({
-        key: cacheKey,
-        payload: updatedList,
-        fetched_at: now,
-      }),
-    }).catch(() => {});
-  }
-
-  const allLocal = getLocalProjects().filter((p) => p.id !== projectId);
-  saveLocalProjects(allLocal);
-
+  await saveUserProjectsList(normalizedEmail, updatedList);
   return true;
 }

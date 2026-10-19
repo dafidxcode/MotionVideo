@@ -101,6 +101,7 @@ export function useConversationState() {
         timestamp: Date.now() - (historyMessages.length - idx) * 1000,
         codeSnapshot: m.codeSnapshot,
         attachedImages: m.attachedImages,
+        metadata: (m as any).metadata,
       }));
       setState((prev) => ({
         ...prev,

@@ -14,7 +14,17 @@ import {
   RefreshCw,
   Film,
   CheckCircle2,
+  AlertCircle,
 } from "lucide-react";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Button } from "@/components/ui/button";
 import type { MotionProject } from "@/lib/projects";
 
 interface ProjectHistoryModalProps {
@@ -31,10 +41,23 @@ export function ProjectHistoryModal({
   const [projects, setProjects] = useState<MotionProject[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [projectToDelete, setProjectToDelete] = useState<{ id: string; title: string } | null>(null);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   useEffect(() => {
     setMounted(true);
   }, []);
+
+  // BUG-45: Lock background body scroll while modal is active
+  useEffect(() => {
+    if (isOpen) {
+      const originalOverflow = document.body.style.overflow;
+      document.body.style.overflow = "hidden";
+      return () => {
+        document.body.style.overflow = originalOverflow;
+      };
+    }
+  }, [isOpen]);
 
   const fetchProjects = useCallback(async () => {
     setIsLoading(true);
@@ -59,31 +82,52 @@ export function ProjectHistoryModal({
     }
   }, [isOpen, fetchProjects]);
 
+  // BUG-65: Auto-poll project status if any project is in "rendering" state
+  useEffect(() => {
+    if (!isOpen) return;
+    const hasRendering = projects.some((p) => p.renderStatus === "rendering");
+    if (!hasRendering) return;
+
+    const interval = setInterval(() => {
+      fetchProjects();
+    }, 4000);
+
+    return () => clearInterval(interval);
+  }, [isOpen, projects, fetchProjects]);
+
   // Handle escape key
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && isOpen) {
+      if (e.key === "Escape" && isOpen && !projectToDelete) {
         onClose();
       }
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [isOpen, onClose]);
+  }, [isOpen, onClose, projectToDelete]);
 
-  const handleDelete = async (id: string, e: React.MouseEvent) => {
-    e.stopPropagation();
-    if (!confirm("Are you sure you want to delete this project from history?")) return;
-
+  // BUG-35 & BUG-53: Radix Dialog confirmation + error feedback on delete failure
+  const confirmDelete = async () => {
+    if (!projectToDelete) return;
+    const { id } = projectToDelete;
     setDeletingId(id);
+    setDeleteError(null);
     try {
       const res = await fetch(`/api/projects?id=${encodeURIComponent(id)}`, {
         method: "DELETE",
       });
       if (res.ok) {
         setProjects((prev) => prev.filter((p) => p.id !== id));
+        setProjectToDelete(null);
+      } else {
+        const data = await res.json().catch(() => ({}));
+        setDeleteError(data.error || "Failed to delete project from history. Please try again.");
+        fetchProjects();
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error("Failed to delete project:", err);
+      setDeleteError(err?.message || "Network error while deleting project.");
+      fetchProjects();
     } finally {
       setDeletingId(null);
     }
@@ -155,6 +199,7 @@ export function ProjectHistoryModal({
             <button
               type="button"
               onClick={onClose}
+              aria-label="Close history modal"
               className="p-2 rounded-xl text-neutral-400 hover:text-white hover:bg-white/10 transition-colors cursor-pointer"
               title="Close"
             >
@@ -165,6 +210,23 @@ export function ProjectHistoryModal({
 
         {/* Modal Body */}
         <div className="flex-1 overflow-y-auto p-4 sm:p-5 space-y-3 custom-scrollbar">
+          {deleteError && (
+            <div className="flex items-center justify-between gap-2 p-3 rounded-xl bg-rose-500/10 border border-rose-500/25 text-rose-300 text-xs font-medium">
+              <div className="flex items-center gap-2">
+                <AlertCircle className="w-4 h-4 shrink-0 text-rose-400" />
+                <span>{deleteError}</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setDeleteError(null)}
+                className="text-rose-400 hover:text-white"
+                aria-label="Dismiss error"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+          )}
+
           {isLoading ? (
             <div className="py-16 flex flex-col items-center justify-center gap-3 text-neutral-400">
               <Loader2 className="w-8 h-8 animate-spin text-[#0084FF]" />
@@ -210,6 +272,12 @@ export function ProjectHistoryModal({
                         <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-blue-500/15 text-blue-400 border border-blue-500/25 shrink-0">
                           <Loader2 className="w-3 h-3 animate-spin" />
                           Rendering
+                        </span>
+                      )}
+                      {project.renderStatus === "failed" && (
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-rose-500/15 text-rose-400 border border-rose-500/25 shrink-0" title="Render failed. Any charged credits were automatically refunded.">
+                          <AlertCircle className="w-3 h-3" />
+                          Render Failed
                         </span>
                       )}
                     </div>
@@ -271,10 +339,18 @@ export function ProjectHistoryModal({
                       {/* Delete Button */}
                       <button
                         type="button"
-                        onClick={(e) => handleDelete(project.id, e)}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setDeleteError(null);
+                          setProjectToDelete({
+                            id: project.id,
+                            title: project.title || "Untitled Motion Project",
+                          });
+                        }}
                         disabled={deletingId === project.id}
                         className="p-1.5 rounded-lg text-neutral-400 hover:text-rose-400 hover:bg-rose-500/10 transition-colors cursor-pointer"
                         title="Delete project"
+                        aria-label="Delete project"
                       >
                         {deletingId === project.id ? (
                           <Loader2 className="w-4 h-4 animate-spin" />
@@ -290,6 +366,52 @@ export function ProjectHistoryModal({
           )}
         </div>
       </div>
+
+      {/* Confirmation Dialog for Project Deletion (BUG-35 + BUG-53) */}
+      <Dialog
+        open={Boolean(projectToDelete)}
+        onOpenChange={(open) => {
+          if (!open) setProjectToDelete(null);
+        }}
+      >
+        <DialogContent className="bg-[#18181B] border border-[#28282C] text-[#F5F5F7] max-w-sm">
+          <DialogHeader>
+            <DialogTitle className="text-base font-semibold text-white">
+              Delete Project?
+            </DialogTitle>
+            <DialogDescription className="text-xs text-[#9A9AA2] leading-relaxed">
+              Are you sure you want to delete &ldquo;{projectToDelete?.title}&rdquo; from your history? This action cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="flex flex-row gap-2 justify-end mt-4">
+            <Button
+              variant="ghost"
+              size="sm"
+              disabled={Boolean(deletingId)}
+              onClick={() => setProjectToDelete(null)}
+              className="text-[#9A9AA2] hover:text-white"
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              size="sm"
+              disabled={Boolean(deletingId)}
+              onClick={confirmDelete}
+              className="bg-red-600 hover:bg-red-500 text-white"
+            >
+              {deletingId ? (
+                <>
+                  <Loader2 className="w-3.5 h-3.5 animate-spin mr-1.5" />
+                  Deleting...
+                </>
+              ) : (
+                "Delete"
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>,
     document.body,
   );

@@ -79,10 +79,14 @@ export async function POST(req: NextRequest) {
 
     const sessionToken = createSessionToken(sessionUser);
 
+    // BUG-02: the profile legacy_key is no longer echoed to the browser.
+    // Authentication relies solely on the httpOnly session cookie.
+    const { key: _legacyKey, ...safeUser } = sessionUser;
+    void _legacyKey;
+
     const response = NextResponse.json({
       success: true,
-      user: sessionUser,
-      key: sessionUser.key,
+      user: safeUser,
       quota: sessionUser.quota,
       email: sessionUser.email,
       name: sessionUser.name,

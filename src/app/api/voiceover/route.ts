@@ -11,7 +11,8 @@ import {
 } from "@/types/voice";
 import { persistAudio } from "@/lib/audio-storage";
 import { logRuntime } from "@/lib/runtime-logger";
-import { verifySessionToken } from "@/lib/auth";
+import { requireActiveUser } from "@/lib/auth";
+import { checkRateLimit } from "@/lib/rate-limit";
 import { NextResponse } from "next/server";
 
 const DEFAULT_LANGUAGE: VoiceLanguageCode = "en";
@@ -89,24 +90,30 @@ async function transcribeWithWhisper(
 }
 
 export async function POST(req: Request) {
-  // Extract user identity from session cookie or auth header
-  const cookieHeader = req.headers.get("cookie") || "";
-  const authHeader = req.headers.get("authorization");
-  let token = "";
-  if (cookieHeader) {
-    const match = cookieHeader.match(/swdbot_session=([^;]+)/);
-    if (match) token = match[1];
+  // BUG-03 / BUG-06: this endpoint spends the HeyGen quota. It previously fell
+  // back to "Guest User" for any unauthenticated caller.
+  const guard = await requireActiveUser(req);
+  if (!guard.ok || !guard.email) {
+    return NextResponse.json(
+      { error: guard.error || "Authentication required. Please sign in again." },
+      { status: guard.status },
+    );
   }
-  if (!token && authHeader?.startsWith("Bearer ")) {
-    token = authHeader.substring(7);
-  }
+  const userEmail = guard.email;
 
-  let userEmail = "Guest User";
-  if (token) {
-    const verified = verifySessionToken(token);
-    if (verified.valid && verified.email) {
-      userEmail = verified.email;
-    }
+  // Rate limiting (BUG-03): max 15 requests per minute per user
+  const rateLimit = checkRateLimit(`voiceover:${userEmail}`, {
+    windowMs: 60_000,
+    maxRequests: 15,
+  });
+  if (!rateLimit.allowed) {
+    return NextResponse.json(
+      {
+        error: "Too many voiceover requests. Please wait a moment and try again.",
+        retryAfterMs: rateLimit.resetMs,
+      },
+      { status: 429 },
+    );
   }
 
   let projectId: string | undefined;

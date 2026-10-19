@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { ErrorDisplay } from "@/components/ErrorDisplay";
 import { StylePicker } from "@/components/StylePicker";
 import { Button } from "@/components/ui/button";
@@ -43,6 +44,7 @@ import {
   Subtitles,
   Volume2,
   X,
+  ExternalLink,
 } from "lucide-react";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
@@ -61,13 +63,24 @@ export interface VoiceCatalogPayload {
   warning: string | null;
 }
 
-export const DURATION_OPTIONS = [
-  { value: "300", label: "10 seconds", seconds: 10, credits: 2 },
-  { value: "600", label: "20 seconds", seconds: 20, credits: 4 },
-  { value: "900", label: "30 seconds", seconds: 30, credits: 6 },
-  { value: "1800", label: "1 minute", seconds: 60, credits: 12 },
-  { value: "3600", label: "2 minutes", seconds: 120, credits: 24 },
+export const BASE_DURATION_CONFIGS = [
+  { value: "300", label: "10 seconds", seconds: 10 },
+  { value: "600", label: "20 seconds", seconds: 20 },
+  { value: "900", label: "30 seconds", seconds: 30 },
+  { value: "1800", label: "1 minute", seconds: 60 },
+  { value: "3600", label: "2 minutes", seconds: 120 },
 ];
+
+export function getDurationOptions(ratePer10s: number = 2) {
+  const safeRate = Number.isFinite(ratePer10s) && ratePer10s > 0 ? ratePer10s : 2;
+  return BASE_DURATION_CONFIGS.map((d) => ({
+    ...d,
+    credits: Math.max(safeRate, Math.round((d.seconds / 10) * safeRate)),
+  }));
+}
+
+// BUG-10: Default DURATION_OPTIONS computed dynamically from default rate
+export const DURATION_OPTIONS = getDurationOptions(2);
 
 interface LandingPageInputProps {
   onNavigate: (
@@ -91,6 +104,7 @@ interface LandingPageInputProps {
 export function LandingPageInput({
   onNavigate,
   isNavigating = false,
+  showCodeExamplesLink = false,
 }: LandingPageInputProps) {
   const [prompt, setPrompt] = useState("");
   const [selectedStyleId, setSelectedStyleId] = useState<string | null>(null);
@@ -119,9 +133,33 @@ export function LandingPageInput({
   const currentLang =
     LANGUAGE_OPTIONS.find((l) => l.id === language) || LANGUAGE_OPTIONS[0];
 
+  const [ratePer10s, setRatePer10s] = useState<number>(2);
+
+  // BUG-10: Synchronize duration credit costs dynamically from server settings
+  useEffect(() => {
+    let isMounted = true;
+    fetch("/api/config")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        if (isMounted && data?.pricing?.initialGenerationCost) {
+          const fetchedRate = Number(data.pricing.initialGenerationCost);
+          if (fetchedRate > 0) setRatePer10s(fetchedRate);
+        }
+      })
+      .catch(() => { });
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  const durationOptions = useMemo(
+    () => getDurationOptions(ratePer10s),
+    [ratePer10s],
+  );
+
   const currentDuration =
-    DURATION_OPTIONS.find((d) => d.value === String(durationInFrames)) ||
-    DURATION_OPTIONS[0];
+    durationOptions.find((d) => d.value === String(durationInFrames)) ||
+    durationOptions[0];
 
   // Load the language-scoped voice catalog with instant client-side caching.
   const loadVoiceCatalog = useCallback(async (lang: LanguageCode) => {
@@ -260,19 +298,11 @@ export function LandingPageInput({
     e.preventDefault();
     if (!prompt.trim() || !activeStyle || isNavigating) return;
 
-    // Embed visual style & aspect ratio instructions into prompt sent to AI Agent
-    // WITHOUT touching or mutating the user's typed prompt in the input textarea!
-    const aspectRatioDirective =
-      aspectRatio === "9:16"
-        ? "\n\n## TARGET ASPECT RATIO: 9:16 VERTICAL (1080x1920) (CRITICAL)\n- Design specifically for vertical mobile layout (TikTok / Reels / Shorts).\n- Composition is 1080px wide by 1920px tall. Center the main visual narrative vertically.\n- Leave comfortable margins at top and bottom for mobile UI overlays.\n- Ensure typography and elements are scaled nicely for vertical view."
-        : aspectRatio === "1:1"
-          ? "\n\n## TARGET ASPECT RATIO: 1:1 SQUARE (1080x1080) (CRITICAL)\n- Design specifically for square feed layout (Instagram / LinkedIn / Facebook).\n- Composition is 1080px wide by 1080px tall. Keep visual balance centered and impactful."
-          : "\n\n## TARGET ASPECT RATIO: 16:9 WIDESCREEN (1920x1080) (CRITICAL)\n- Design for cinematic widescreen (1920x1080). Standard desktop and YouTube presentation.";
-
-    const finalPrompt =
-      (activeStyle
-        ? `${prompt.trim()}\n\n## VISUAL STYLE & AESTHETIC DIRECTIVE (${activeStyle.name.toUpperCase()} - ${activeStyle.category}):\n${activeStyle.prompt}`
-        : prompt.trim()) + aspectRatioDirective;
+    // BUG-46: Server system prompt is the single source of truth for aspect ratio instructions.
+    // Client only passes the active visual style in prompt, options.aspectRatio handles dimensions.
+    const finalPrompt = activeStyle
+      ? `${prompt.trim()}\n\n## VISUAL STYLE & AESTHETIC DIRECTIVE (${activeStyle.name.toUpperCase()} - ${activeStyle.category}):\n${activeStyle.prompt}`
+      : prompt.trim();
 
     onNavigate(
       finalPrompt,
@@ -344,7 +374,14 @@ export function LandingPageInput({
     const ex = EXAMPLE_PROMPTS.find((p) => p.id === exampleId);
     if (!ex) return;
     setSelectedExampleId(exampleId);
-    setPrompt(ex.prompt);
+    // BUG-49: Never destructively overwrite user's work. If existing prompt has content, append or preserve.
+    setPrompt((prev) => {
+      const trimmed = prev.trim();
+      if (trimmed && trimmed !== ex.prompt.trim()) {
+        return `${trimmed}\n\n${ex.prompt}`;
+      }
+      return ex.prompt;
+    });
     setSelectedStyleId(ex.styleId);
   }, []);
 
@@ -394,6 +431,17 @@ export function LandingPageInput({
             <p className="text-xs sm:text-sm text-[#9A9AA2] leading-relaxed">
               Enter your story idea or pick a style from the gallery. AI will craft a cinematic motion graphics video following Bang Motion&apos;s Anti-PPT principles.
             </p>
+            {showCodeExamplesLink && (
+              <div className="mt-2.5 flex items-center">
+                <Link
+                  href="/code-examples"
+                  className="inline-flex items-center gap-1.5 text-xs text-amber-400 hover:text-amber-300 font-semibold tracking-wide transition-colors"
+                >
+                  <span>Explore</span>
+                  <ExternalLink className="w-3.5 h-3.5" />
+                </Link>
+              </div>
+            )}
           </div>
 
           <form onSubmit={handleSubmit} className="w-full">
@@ -923,7 +971,7 @@ export function LandingPageInput({
                     </div>
                   </SelectTrigger>
                   <SelectContent className="bg-[#18181B] border-[#28282C] text-[#F5F5F7] shadow-2xl">
-                    {DURATION_OPTIONS.map((d) => (
+                    {durationOptions.map((d) => (
                       <SelectItem
                         key={d.value}
                         value={d.value}

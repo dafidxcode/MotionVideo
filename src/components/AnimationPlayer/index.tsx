@@ -6,6 +6,8 @@ import React, { useEffect, useRef } from "react";
 import { getAspectRatioDimensions, type AspectRatioId } from "@/types/aspect-ratio";
 import { ErrorDisplay, type ErrorType } from "../ErrorDisplay";
 import { RenderControls } from "./RenderControls";
+import { SettingsModal } from "./SettingsModal";
+import { VoiceoverModal } from "./VoiceoverModal";
 
 const errorTitles: Record<ErrorType, string> = {
   validation: "Invalid Prompt",
@@ -52,13 +54,20 @@ export const AnimationPlayer: React.FC<AnimationPlayerProps> = ({
   fps,
   projectId,
   aspectRatio = "16:9",
+  onDurationChange,
+  onFpsChange,
   isCompiling,
   isStreaming,
   error,
   errorType = "compilation",
   code,
+  onCodeChange,
   onRuntimeError,
   onFrameChange,
+  initialVoice,
+  initialVoiceModel,
+  initialLanguage,
+  initialAutoCaption,
 }) => {
   const playerRef = useRef<PlayerRef>(null);
 
@@ -151,7 +160,7 @@ export const AnimationPlayer: React.FC<AnimationPlayerProps> = ({
         <div className={`w-full ${aspectClass} max-h-[calc(100%-80px)] rounded-xl overflow-hidden shadow-[0_0_60px_rgba(0,0,0,0.5)] border border-[#28282C] relative bg-black`}>
           <Player
             ref={playerRef}
-            key={`${aspectRatio}-${durationInFrames}-${audioSrc}`}
+            key={`${aspectRatio}-${audioSrc}`}
             component={Component}
             durationInFrames={durationInFrames}
             fps={fps}
@@ -197,6 +206,28 @@ export const AnimationPlayer: React.FC<AnimationPlayerProps> = ({
                 <Sparkles className="w-3 h-3" />
                 <span>Kinetic Subtitles</span>
               </span>
+            )}
+
+            {/* BUG-25 & BUG-26: Render Voiceover & Settings modals */}
+            <VoiceoverModal
+              code={code}
+              onCodeChange={onCodeChange}
+              durationInFrames={durationInFrames}
+              fps={fps}
+              onDurationChange={onDurationChange}
+              initialVoice={initialVoice}
+              initialVoiceModel={initialVoiceModel}
+              initialLanguage={initialLanguage}
+              initialAutoCaption={initialAutoCaption}
+            />
+
+            {onDurationChange && onFpsChange && (
+              <SettingsModal
+                durationInFrames={durationInFrames}
+                onDurationChange={onDurationChange}
+                fps={fps}
+                onFpsChange={onFpsChange}
+              />
             )}
           </div>
 

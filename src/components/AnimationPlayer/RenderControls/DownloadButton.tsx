@@ -48,6 +48,7 @@ export const DownloadButton: React.FC<DownloadButtonProps> = ({
 }) => {
   const [isZipping, setIsZipping] = useState(false);
   const [zipSuccess, setZipSuccess] = useState(false);
+  const [zipError, setZipError] = useState<string | null>(null);
 
   if (state.status === "rendering") {
     return <Button disabled>Rendering in progress...</Button>;
@@ -65,7 +66,7 @@ export const DownloadButton: React.FC<DownloadButtonProps> = ({
     if (capMatch && capMatch[1]) {
       captions = JSON.parse(capMatch[1]);
     }
-  } catch {}
+  } catch { }
 
   const handleDownloadSingleHtml = () => {
     const htmlContent = generateSingleHtml({
@@ -85,16 +86,24 @@ export const DownloadButton: React.FC<DownloadButtonProps> = ({
     try {
       setIsZipping(true);
       setZipSuccess(false);
+      setZipError(null);
 
-      // 1. Fetch rendered MP4 video
-      const videoRes = await fetch(state.url);
-      if (!videoRes.ok) throw new Error("Could not download rendered video");
-      const videoBuffer = await videoRes.arrayBuffer();
+      // BUG-38: Guard against memory exhaustion / crashes in browser for large videos (> 50MB)
+      const MAX_IN_MEMORY_ZIP_BYTES = 50 * 1024 * 1024;
+      const isVideoTooLargeForMemory = state.size > MAX_IN_MEMORY_ZIP_BYTES;
+
+      let videoBuffer: ArrayBuffer | null = null;
+      if (!isVideoTooLargeForMemory) {
+        // 1. Fetch rendered MP4 video
+        const videoRes = await fetch(state.url);
+        if (!videoRes.ok) throw new Error("Could not download rendered video");
+        videoBuffer = await videoRes.arrayBuffer();
+      }
 
       // 2. Generate Single HTML player
       const htmlContent = generateSingleHtml({
         title: "Swdbot Motion Animation",
-        videoUrl: "video.mp4", // relative path inside zip
+        videoUrl: isVideoTooLargeForMemory ? state.url : "video.mp4",
         script,
         captions,
         aspectRatio,
@@ -120,20 +129,43 @@ export const DownloadButton: React.FC<DownloadButtonProps> = ({
           : "(No word timestamps)",
       ].join("\n");
 
-      // 4. Create ZIP
-      const zipBlob = createZipArchive([
-        { filename: "video.mp4", data: videoBuffer },
+      // BUG-37: Do not leak presigned AWS S3 credentials in exported source code
+      const sanitizedCode = code.replace(
+        /https:\/\/[^"'\s]*\.amazonaws\.com\/[^"'\s]*\?[^"'\s]+/g,
+        "/api/audio/narration.mp3",
+      );
+
+      // 4. Assemble ZIP entries
+      const entries: { filename: string; data: string | Uint8Array | ArrayBuffer }[] = [
         { filename: "index.html", data: htmlContent },
         { filename: "script.txt", data: scriptFileContent },
-        { filename: "code.tsx", data: code },
-      ]);
+        { filename: "code.tsx", data: sanitizedCode },
+      ];
 
+      if (videoBuffer) {
+        entries.unshift({ filename: "video.mp4", data: videoBuffer });
+      } else {
+        entries.push({
+          filename: "README-VIDEO-DOWNLOAD.txt",
+          data: [
+            "Your rendered MP4 video exceeds 50MB and was omitted from this ZIP archive to prevent browser memory crashes.",
+            "",
+            `Direct video stream / download link: ${state.url}`,
+            "",
+            "You can download the video directly at any time by clicking the 'Download Video' button in the Swdbot Studio.",
+          ].join("\n"),
+        });
+      }
+
+      const zipBlob = createZipArchive(entries);
       downloadBlob(zipBlob, `swdbot-motion-package-${Date.now()}.zip`);
       setZipSuccess(true);
       setTimeout(() => setZipSuccess(false), 4000);
-    } catch (err) {
+    } catch (err: any) {
       console.error("ZIP creation error:", err);
-      alert("Failed to build ZIP archive. Please download the video directly.");
+      // BUG-35: Avoid thread-blocking alert
+      setZipError(err?.message || "Failed to build ZIP archive. Please download the video directly.");
+      setTimeout(() => setZipError(null), 5000);
     } finally {
       setIsZipping(false);
     }
@@ -171,7 +203,7 @@ export const DownloadButton: React.FC<DownloadButtonProps> = ({
         size="sm"
         onClick={handleDownloadSingleHtml}
         className="bg-[#232326] hover:bg-[#2C2C30] text-[#F5F5F7] border border-[#3A3A40] cursor-pointer flex items-center gap-1.5"
-        title="Download self-contained offline HTML player"
+        title="Download standalone HTML player"
       >
         <FileCode2 className="w-4 h-4 text-amber-400" />
         <span>Single HTML</span>
@@ -195,6 +227,12 @@ export const DownloadButton: React.FC<DownloadButtonProps> = ({
         )}
         <span>{isZipping ? "Packing ZIP..." : zipSuccess ? "ZIP Downloaded!" : "Export ZIP"}</span>
       </Button>
+
+      {zipError && (
+        <span className="text-xs text-rose-400 font-medium px-2 py-1 rounded bg-rose-500/10 border border-rose-500/20">
+          {zipError}
+        </span>
+      )}
     </div>
   );
 };

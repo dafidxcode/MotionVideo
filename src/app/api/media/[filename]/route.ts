@@ -1,14 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import fs from "fs";
 import path from "path";
-import { MEDIA_DIR, startMediaCleanupScheduler } from "@/lib/localMediaStorage";
+import { MEDIA_DIR } from "@/lib/localMediaStorage";
+import { parseHttpRange } from "@/lib/http-range";
 
 export const dynamic = "force-dynamic";
-
-// Ensure cleanup scheduler is started
-if (typeof window === "undefined") {
-  startMediaCleanupScheduler();
-}
 
 const MIME_MAP: Record<string, string> = {
   ".mp4": "video/mp4",
@@ -46,21 +42,19 @@ export async function GET(
   const ext = path.extname(filename).toLowerCase();
   const contentType = MIME_MAP[ext] || "application/octet-stream";
 
-  // Handle Range request for smooth video/audio playback
-  const range = req.headers.get("range");
+  // Handle Range request for smooth video/audio playback (BUG-22)
+  const rangeHeader = req.headers.get("range");
 
-  if (range) {
-    const parts = range.replace(/bytes=/, "").split("-");
-    const start = parseInt(parts[0], 10);
-    const end = parts[1] ? parseInt(parts[1], 10) : stat.size - 1;
-
-    if (start >= stat.size || end >= stat.size) {
+  if (rangeHeader) {
+    const parsedRange = parseHttpRange(rangeHeader, stat.size);
+    if (!parsedRange) {
       return new NextResponse(null, {
         status: 416,
         headers: { "Content-Range": `bytes */${stat.size}` },
       });
     }
 
+    const { start, end } = parsedRange;
     const chunksize = end - start + 1;
     const stream = fs.createReadStream(filePath, { start, end });
     

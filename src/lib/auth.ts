@@ -57,10 +57,56 @@ export function isAdminUser(email?: string | null): boolean {
   return adminEmails.includes(email.toLowerCase().trim());
 }
 
-const SESSION_SECRET =
-  process.env.AUTH_SESSION_SECRET ||
-  "swdbot-motion-studio-secret-auth-session-key-2026";
+/**
+ * Session secret resolution (BUG-01).
+ *
+ * SECURITY: there is NO hardcoded fallback secret. If `AUTH_SESSION_SECRET` is
+ * absent the module refuses to sign or verify sessions instead of falling back
+ * to a public, repository-committed key.
+ */
+function resolveSessionSecret(): string | null {
+  const raw = process.env.AUTH_SESSION_SECRET;
+  if (typeof raw !== "string") return null;
+  const secret = raw.trim();
+  if (secret.length < 32) {
+    console.error(
+      "[Auth] AUTH_SESSION_SECRET must be at least 32 characters. Sessions are disabled.",
+    );
+    return null;
+  }
+  return secret;
+}
+
+/**
+ * Optional previous secret used for rotation. It must also come from the
+ * environment — never from source — and is only accepted for verification.
+ */
+function resolvePreviousSessionSecret(): string | null {
+  const raw = process.env.AUTH_SESSION_SECRET_PREVIOUS;
+  if (typeof raw !== "string") return null;
+  const secret = raw.trim();
+  return secret.length >= 32 ? secret : null;
+}
+
 const COOKIE_NAME = "swdbot_session";
+
+/** Constant-time signature comparison to avoid timing side channels. */
+function safeCompare(a: string, b: string): boolean {
+  const bufA = Buffer.from(a, "utf-8");
+  const bufB = Buffer.from(b, "utf-8");
+  if (bufA.length !== bufB.length) {
+    // Still perform a comparison to keep the timing roughly constant.
+    crypto.timingSafeEqual(
+      bufA as unknown as Uint8Array<ArrayBuffer>,
+      bufA as unknown as Uint8Array<ArrayBuffer>,
+    );
+    return false;
+  }
+  return crypto.timingSafeEqual(
+    bufA as unknown as Uint8Array<ArrayBuffer>,
+    bufB as unknown as Uint8Array<ArrayBuffer>,
+  );
+}
 
 // ── Turnstile Verification ──────────────────────────────────────────────────
 export async function verifyTurnstileToken(
@@ -68,7 +114,28 @@ export async function verifyTurnstileToken(
   clientIp?: string,
 ): Promise<{ ok: boolean; error?: string }> {
   const secret = process.env.CLOUDFLARE_TURNSTILE_SECRET_KEY;
-  if (!secret) return { ok: true }; // Not configured, skip check
+  if (!secret) {
+    // Fail closed (BUG-04). Previously this returned { ok: true }, which meant a
+    // missing secret silently disabled the bot protection entirely.
+    // Escape hatch for local development only.
+    const allowLocalBypass =
+      process.env.NODE_ENV !== "production" &&
+      process.env.TURNSTILE_ALLOW_UNCONFIGURED === "true";
+    if (allowLocalBypass) {
+      console.warn(
+        "[Turnstile] TURNSTILE_ALLOW_UNCONFIGURED=true — verification skipped (non-production only).",
+      );
+      return { ok: true };
+    }
+    console.error(
+      "[Turnstile] CLOUDFLARE_TURNSTILE_SECRET_KEY is not configured — failing closed.",
+    );
+    return {
+      ok: false,
+      error:
+        "Security verification is unavailable. Please contact the administrator.",
+    };
+  }
 
   if (!token) {
     return { ok: false, error: "Cloudflare Turnstile token is required" };
@@ -139,7 +206,24 @@ export async function verifyGoogleToken(idToken: string): Promise<{
       ""
     ).trim();
 
-    if (expectedClientId && payload.aud && payload.aud !== expectedClientId) {
+    // BUG-05: the audience check used to be skipped whenever GOOGLE_CLIENT_ID
+    // was unset, which meant an ID token minted for ANY client/app was accepted.
+    // It is now mandatory: an unset expected client ID or a mismatch fails.
+    if (!expectedClientId) {
+      console.error(
+        "[Google Verify] GOOGLE_CLIENT_ID is not configured — failing closed.",
+      );
+      return {
+        ok: false,
+        error: "Google sign-in is not configured on this server.",
+      };
+    }
+
+    if (!payload.aud) {
+      return { ok: false, error: "Google credential is missing an audience" };
+    }
+
+    if (payload.aud !== expectedClientId) {
       return { ok: false, error: "Google credential client audience mismatch" };
     }
 
@@ -259,6 +343,12 @@ export function validateVipMembership(profile: SwdbotUserProfile | null): {
 
 // ── Session Token Creation & Verification ───────────────────────────────────
 export function createSessionToken(user: SwdbotSessionUser): string {
+  const secret = resolveSessionSecret();
+  if (!secret) {
+    throw new Error(
+      "AUTH_SESSION_SECRET is not configured. Refusing to issue session tokens.",
+    );
+  }
   const payload = {
     key: user.key,
     email: user.email,
@@ -268,7 +358,7 @@ export function createSessionToken(user: SwdbotSessionUser): string {
   const json = JSON.stringify(payload);
   const base64Data = Buffer.from(json).toString("base64url");
   const signature = crypto
-    .createHmac("sha256", SESSION_SECRET)
+    .createHmac("sha256", secret)
     .update(base64Data)
     .digest("hex");
   return `${base64Data}.${signature}`;
@@ -276,29 +366,31 @@ export function createSessionToken(user: SwdbotSessionUser): string {
 
 export function verifySessionToken(
   token: string,
-): { valid: boolean; email?: string; key?: string; isAdmin?: boolean } {
+): { valid: boolean; email?: string; key?: string; isAdmin?: boolean; exp?: number } {
   try {
+    const secret = resolveSessionSecret();
+    if (!secret) return { valid: false };
     if (!token || !token.includes(".")) return { valid: false };
     const [base64Data, signature] = token.split(".");
     if (!base64Data || !signature) return { valid: false };
 
-    let isValid = false;
     const expectedSig = crypto
-      .createHmac("sha256", SESSION_SECRET)
+      .createHmac("sha256", secret)
       .update(base64Data)
       .digest("hex");
 
-    if (expectedSig === signature) {
-      isValid = true;
-    } else {
-      // Graceful secret rotation: accept legacy secret so active sessions do not expire
-      const fallbackSecret = "swdbot-motion-studio-secret-auth-session-key-2026";
-      const fallbackSig = crypto
-        .createHmac("sha256", fallbackSecret)
-        .update(base64Data)
-        .digest("hex");
-      if (fallbackSig === signature) {
-        isValid = true;
+    let isValid = safeCompare(expectedSig, signature);
+
+    if (!isValid) {
+      // Graceful secret rotation: accept the previous secret ONLY when it is
+      // explicitly provided through the environment (never a hardcoded value).
+      const previousSecret = resolvePreviousSessionSecret();
+      if (previousSecret) {
+        const previousSig = crypto
+          .createHmac("sha256", previousSecret)
+          .update(base64Data)
+          .digest("hex");
+        isValid = safeCompare(previousSig, signature);
       }
     }
 
@@ -314,10 +406,102 @@ export function verifySessionToken(
     const email = payload.email;
     const isAdmin = Boolean(payload.isAdmin || isAdminUser(email));
 
-    return { valid: true, email, key: payload.key, isAdmin };
+    return { valid: true, email, key: payload.key, isAdmin, exp: payload.exp };
   } catch {
     return { valid: false };
   }
+}
+
+// ── Server-side Auth Guard for Paid Endpoints (BUG-06) ──────────────────────
+
+/** Extract a session token from a cookie header or an Authorization header. */
+export function readSessionToken(req: Request): string {
+  let token = "";
+  const cookieHeader = req.headers.get("cookie") || "";
+  if (cookieHeader) {
+    const match = cookieHeader.match(
+      new RegExp(`${COOKIE_NAME.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}=([^;]+)`),
+    );
+    if (match) token = match[1];
+  }
+  if (!token) {
+    const authHeader = req.headers.get("authorization");
+    if (authHeader?.startsWith("Bearer ")) {
+      token = authHeader.substring(7);
+    }
+  }
+  return token;
+}
+
+export interface AuthGuardResult {
+  ok: boolean;
+  status: number;
+  email?: string;
+  isAdmin: boolean;
+  error?: string;
+  message?: string;
+}
+
+/**
+ * Fail-closed guard for paid endpoints (BUG-03 + BUG-06).
+ *
+ * Verifies the session signature, then re-reads the live Swdbot profile so a
+ * blocked, non-VIP or expired-VIP account cannot keep using previously issued
+ * session cookies.
+ */
+export async function requireActiveUser(
+  req: Request,
+  opts: { allowGuest?: boolean } = {},
+): Promise<AuthGuardResult> {
+  const token = readSessionToken(req);
+  if (!token) {
+    if (opts.allowGuest) {
+      return { ok: true, status: 200, isAdmin: false };
+    }
+    return {
+      ok: false,
+      status: 401,
+      isAdmin: false,
+      error: "Authentication required. Please sign in again.",
+    };
+  }
+
+  const verified = verifySessionToken(token);
+  if (!verified.valid || !verified.email) {
+    return {
+      ok: false,
+      status: 401,
+      isAdmin: false,
+      error: "Invalid or expired session. Please sign in again.",
+    };
+  }
+
+  const email = verified.email;
+  const profile = await getSwdbotProfileByEmail(email);
+  if (!profile) {
+    return {
+      ok: false,
+      status: 403,
+      isAdmin: false,
+      email,
+      error: "Account not found on Swdbot.",
+      message: "This account is not registered on Swdbot.",
+    };
+  }
+
+  const vip = validateVipMembership(profile);
+  if (!vip.isVip) {
+    return {
+      ok: false,
+      status: 403,
+      isAdmin: false,
+      email,
+      error: vip.message,
+      message: vip.message,
+    };
+  }
+
+  return { ok: true, status: 200, email, isAdmin: Boolean(verified.isAdmin) };
 }
 
 export { COOKIE_NAME };

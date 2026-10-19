@@ -26,7 +26,16 @@ import {
   Users,
 } from "lucide-react";
 import Link from "next/link";
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Button } from "@/components/ui/button";
 
 const ALLOWED_ADMIN_EMAILS = [
   "pembekalbaranganthailand@gmail.com",
@@ -139,12 +148,17 @@ export default function AdminPage() {
   const [formChatbotCost, setFormChatbotCost] = useState("1");
   const [formRenderCost, setFormRenderCost] = useState("10");
   const [formDevFeePercent, setFormDevFeePercent] = useState("50");
+  const isFormDirtyRef = useRef(false);
 
-  const isAdmin =
-    user &&
-    ALLOWED_ADMIN_EMAILS.some(
-      (email) => email.toLowerCase() === user.email.toLowerCase().trim(),
-    );
+  // Modal dialog states to eliminate window.prompt and window.confirm (BUG-35)
+  const [quotaModalUser, setQuotaModalUser] = useState<UserProfileItem | null>(null);
+  const [quotaInputValue, setQuotaInputValue] = useState("");
+  const [quotaMode, setQuotaMode] = useState<"add" | "set">("set");
+  const [blockModalUser, setBlockModalUser] = useState<UserProfileItem | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+
+  // BUG-43: Rely on user.isAdmin / role from authenticated session cookie, not client email list
+  const isAdmin = Boolean(user && (user.isAdmin || user.role === "admin"));
 
   // Fetch all admin data
   const fetchData = useCallback(async () => {
@@ -161,12 +175,15 @@ export default function AdminPage() {
         if (data.stats) setStats(data.stats);
         if (data.settings) {
           setSettings(data.settings);
-          setFormInitialGenCost(String(data.settings.initialGenerationCost ?? 2));
-          setFormChatbotCost(String(data.settings.chatbotCost ?? 1));
-          setFormRenderCost(String(data.settings.renderCost ?? 10));
-          setFormDevFeePercent(
-            String(data.settings.developerFeePercent ?? 50),
-          );
+          // BUG-40: Do not overwrite pricing inputs while admin is actively editing
+          if (!isFormDirtyRef.current) {
+            setFormInitialGenCost(String(data.settings.initialGenerationCost ?? 2));
+            setFormChatbotCost(String(data.settings.chatbotCost ?? 1));
+            setFormRenderCost(String(data.settings.renderCost ?? 10));
+            setFormDevFeePercent(
+              String(data.settings.developerFeePercent ?? 50),
+            );
+          }
         }
       }
 
@@ -196,12 +213,12 @@ export default function AdminPage() {
     }
   }, [authLoading, isAdmin, fetchData]);
 
-  // Periodic Auto-refresh
+  // Periodic Auto-refresh (BUG-40: 30s interval instead of 6s to avoid UI disturbance)
   useEffect(() => {
     if (!autoRefresh || !isAdmin) return;
     const interval = setInterval(() => {
       fetchData();
-    }, 6000);
+    }, 30000);
     return () => clearInterval(interval);
   }, [autoRefresh, isAdmin, fetchData]);
 
@@ -229,6 +246,7 @@ export default function AdminPage() {
       });
 
       if (res.ok) {
+        isFormDirtyRef.current = false;
         const data = await res.json();
         setSettings(data.settings);
         setSaveSuccessMessage(
@@ -237,10 +255,11 @@ export default function AdminPage() {
         setTimeout(() => setSaveSuccessMessage(null), 4000);
         fetchData();
       } else {
-        alert("Failed to save settings. Please try again.");
+        setActionError("Failed to save settings. Please try again.");
       }
     } catch (err) {
       console.error("[Admin Settings Error]", err);
+      setActionError("Network error while saving settings.");
     } finally {
       setIsSavingSettings(false);
     }
@@ -265,23 +284,19 @@ export default function AdminPage() {
       });
 
       if (res.ok) {
+        setQuotaModalUser(null);
         fetchData();
       } else {
         const err = await res.json();
-        alert(err.error || "Failed to update quota");
+        setActionError(err.error || "Failed to update quota");
       }
     } catch {
-      alert("Network error while adjusting quota");
+      setActionError("Network error while adjusting quota");
     }
   };
 
   // Toggle User Block Handler
   const handleToggleBlock = async (email: string, currentBlocked?: boolean) => {
-    const confirmMsg = currentBlocked
-      ? `Unblock user ${email}?`
-      : `Block user ${email}? They will immediately lose access to Motion Studio.`;
-    if (!window.confirm(confirmMsg)) return;
-
     try {
       const res = await fetch("/api/admin/users", {
         method: "POST",
@@ -294,13 +309,14 @@ export default function AdminPage() {
       });
 
       if (res.ok) {
+        setBlockModalUser(null);
         fetchData();
       } else {
         const err = await res.json();
-        alert(err.error || "Failed to update block status");
+        setActionError(err.error || "Failed to update block status");
       }
     } catch {
-      alert("Network error while toggling block");
+      setActionError("Network error while toggling block");
     }
   };
 
@@ -471,7 +487,7 @@ export default function AdminPage() {
               </p>
               <div className="flex items-center gap-1.5 mt-1.5 text-[11px] text-[#8E8E93]">
                 <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
-                <span>Active Accounts</span>
+                <span>Active VIP / {stats?.totalUsers ?? users.length} Total Users</span>
               </div>
             </div>
           </div>
@@ -496,11 +512,11 @@ export default function AdminPage() {
             </div>
           </div>
 
-          {/* Card 3: Service Developer Royalty (50%) */}
+          {/* Card 3: Service Developer Royalty */}
           <div className="relative rounded-2xl p-5 bg-[#141416] border border-[#28282C] hover:border-[#38383E] transition-all shadow-sm">
             <div className="flex items-center justify-between mb-3">
               <span className="text-[11px] font-medium text-[#8E8E93] uppercase tracking-wider font-mono">
-                Dev Royalty (50%)
+                Dev Royalty ({settings.developerFeePercent}%)
               </span>
               <div className="w-8 h-8 rounded-xl bg-[#1C1C20] border border-[#28282C] flex items-center justify-center text-[#A1A1AA]">
                 <CircleDollarSign size={16} />
@@ -1126,16 +1142,9 @@ export default function AdminPage() {
                             <button
                               type="button"
                               onClick={() => {
-                                const custom = window.prompt(
-                                  `Set credit quota for ${u.email}:`,
-                                  String(u.quota || 0),
-                                );
-                                if (custom !== null) {
-                                  const val = parseFloat(custom);
-                                  if (!isNaN(val)) {
-                                    handleAdjustQuota(u.email, val, "set");
-                                  }
-                                }
+                                setQuotaModalUser(u);
+                                setQuotaInputValue(String(u.quota ?? 0));
+                                setQuotaMode("set");
                               }}
                               className="inline-flex items-center gap-1 hover:bg-[#1F1F23] px-2 py-1 rounded cursor-pointer transition-colors"
                               title="Click to adjust quota"
@@ -1149,20 +1158,47 @@ export default function AdminPage() {
                             </button>
                           </td>
 
+                          {/* BUG-42: Dynamically calculate user status */}
                           <td className="py-2.5 px-3 whitespace-nowrap">
-                            <span className="inline-flex items-center gap-1.5 text-[11px] font-mono text-[#D4D4D8]">
-                              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
-                              Active VIP
-                            </span>
+                            {(() => {
+                              const isBlocked = Boolean(u.is_blocked);
+                              const isVip = Boolean(u.vip);
+                              const isVipExpired = u.vip_expires_at
+                                ? new Date(u.vip_expires_at).getTime() <= Date.now()
+                                : false;
+
+                              let label = "Non-VIP";
+                              let dot = "bg-neutral-500";
+                              let text = "text-[#8E8E93]";
+
+                              if (isBlocked) {
+                                label = "Suspended";
+                                dot = "bg-rose-500";
+                                text = "text-rose-400";
+                              } else if (isVip && !isVipExpired) {
+                                label = "Active VIP";
+                                dot = "bg-emerald-400";
+                                text = "text-emerald-400";
+                              } else if (isVip && isVipExpired) {
+                                label = "VIP Expired";
+                                dot = "bg-amber-400";
+                                text = "text-amber-400";
+                              }
+
+                              return (
+                                <span className={`inline-flex items-center gap-1.5 text-[11px] font-mono ${text}`}>
+                                  <span className={`w-1.5 h-1.5 rounded-full ${dot}`} />
+                                  {label}
+                                </span>
+                              );
+                            })()}
                           </td>
 
                           <td className="py-2.5 px-3 text-right">
                             {!isUserAdmin && (
                               <button
                                 type="button"
-                                onClick={() =>
-                                  handleToggleBlock(u.email, u.is_blocked)
-                                }
+                                onClick={() => setBlockModalUser(u)}
                                 className={`px-2.5 py-1 rounded-lg text-xs font-medium transition-colors cursor-pointer ${u.is_blocked
                                   ? "bg-[#1C1C20] text-[#D4D4D8] border border-[#28282C] hover:bg-[#24242A]"
                                   : "bg-rose-500/10 text-rose-300 border border-rose-500/20 hover:bg-rose-500/20"
@@ -1211,7 +1247,7 @@ export default function AdminPage() {
               </div>
               <div>
                 <span className="text-[11px] text-[#8E8E93] block font-mono">
-                  50% DEVELOPER FEE LOGGED
+                  {settings.developerFeePercent}% DEVELOPER FEE LOGGED
                 </span>
                 <span className="text-xl font-bold text-white font-mono">
                   RM{" "}
@@ -1231,7 +1267,7 @@ export default function AdminPage() {
                     <th className="py-2.5 px-3">Render Time</th>
                     <th className="py-2.5 px-3">User</th>
                     <th className="py-2.5 px-3">Gross Deduction</th>
-                    <th className="py-2.5 px-3">50% Dev Fee (RM)</th>
+                    <th className="py-2.5 px-3">{settings.developerFeePercent}% Dev Fee (RM)</th>
                     <th className="py-2.5 px-3">Swdbot Redemptions Record</th>
                     <th className="py-2.5 px-3">Status</th>
                   </tr>
@@ -1259,7 +1295,7 @@ export default function AdminPage() {
                           -{rnd.credits} Credits
                         </td>
                         <td className="py-2.5 px-3 font-mono text-white font-medium">
-                          RM {(rnd.credits * 0.5).toFixed(2)}
+                          RM {(rnd.credits * (settings.developerFeePercent / 100)).toFixed(2)}
                         </td>
                         <td className="py-2.5 px-3 font-mono text-[11px] text-[#8E8E93]">
                           Storyboard Video Render (AWS)
@@ -1426,6 +1462,137 @@ export default function AdminPage() {
           </div>
         )}
       </main>
+
+      {/* Modal 1: Adjust Quota Dialog (BUG-35) */}
+      <Dialog open={Boolean(quotaModalUser)} onOpenChange={(open) => !open && setQuotaModalUser(null)}>
+        <DialogContent className="sm:max-w-[420px] bg-[#18181B] border-[#28282C] text-[#F5F5F7]">
+          <DialogHeader>
+            <DialogTitle className="text-base font-bold text-white">Adjust User Credit Quota</DialogTitle>
+            <DialogDescription className="text-xs text-[#9A9AA2] mt-1.5 leading-relaxed">
+              Updating quota balance for <strong className="text-white font-mono">{quotaModalUser?.email}</strong>.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="py-3 space-y-3">
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => setQuotaMode("set")}
+                className={`flex-1 py-1.5 text-xs font-semibold rounded-lg border transition-all cursor-pointer ${quotaMode === "set"
+                    ? "bg-amber-400 text-black border-amber-400"
+                    : "bg-[#1F1F23] text-[#9A9AA2] border-[#28282C]"
+                  }`}
+              >
+                Set Absolute
+              </button>
+              <button
+                type="button"
+                onClick={() => setQuotaMode("add")}
+                className={`flex-1 py-1.5 text-xs font-semibold rounded-lg border transition-all cursor-pointer ${quotaMode === "add"
+                    ? "bg-amber-400 text-black border-amber-400"
+                    : "bg-[#1F1F23] text-[#9A9AA2] border-[#28282C]"
+                  }`}
+              >
+                Add Credits
+              </button>
+            </div>
+            <div>
+              <label className="text-xs text-[#8E8E93] block mb-1">
+                {quotaMode === "set" ? "New Total Quota:" : "Credits to Add:"}
+              </label>
+              <input
+                type="number"
+                step="0.5"
+                value={quotaInputValue}
+                onChange={(e) => setQuotaInputValue(e.target.value)}
+                className="w-full bg-[#0E0E11] border border-[#28282C] rounded-xl px-3.5 py-2 text-sm font-mono text-white focus:outline-none focus:border-[#4A4A52]"
+              />
+            </div>
+          </div>
+          <DialogFooter className="flex justify-end gap-2 mt-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setQuotaModalUser(null)}
+              className="border-[#3A3A40] text-[#9A9AA2] hover:text-white"
+            >
+              Cancel
+            </Button>
+            <Button
+              size="sm"
+              onClick={() => {
+                const val = parseFloat(quotaInputValue);
+                if (quotaModalUser && !isNaN(val)) {
+                  handleAdjustQuota(quotaModalUser.email, val, quotaMode);
+                }
+              }}
+              className="bg-amber-400 hover:bg-amber-300 text-black font-semibold"
+            >
+              Save Quota
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Modal 2: Block / Unblock User Confirmation Dialog (BUG-35) */}
+      <Dialog open={Boolean(blockModalUser)} onOpenChange={(open) => !open && setBlockModalUser(null)}>
+        <DialogContent className="sm:max-w-[420px] bg-[#18181B] border-[#28282C] text-[#F5F5F7]">
+          <DialogHeader>
+            <DialogTitle className="text-base font-bold text-white">
+              {blockModalUser?.is_blocked ? "Unblock User Access" : "Suspend User Access"}
+            </DialogTitle>
+            <DialogDescription className="text-xs text-[#9A9AA2] mt-2 leading-relaxed">
+              {blockModalUser?.is_blocked
+                ? `Are you sure you want to restore access for ${blockModalUser?.email}? They will be able to access Motion Studio again.`
+                : `Are you sure you want to suspend ${blockModalUser?.email}? They will immediately be denied access from all Motion Studio endpoints.`}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="flex justify-end gap-2 mt-4">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setBlockModalUser(null)}
+              className="border-[#3A3A40] text-[#9A9AA2] hover:text-white"
+            >
+              Cancel
+            </Button>
+            <Button
+              size="sm"
+              onClick={() => {
+                if (blockModalUser) {
+                  handleToggleBlock(blockModalUser.email, blockModalUser.is_blocked);
+                }
+              }}
+              className={blockModalUser?.is_blocked ? "bg-emerald-500 hover:bg-emerald-400 text-white font-semibold" : "bg-rose-500 hover:bg-rose-400 text-white font-semibold"}
+            >
+              {blockModalUser?.is_blocked ? "Confirm Unblock" : "Confirm Suspend"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Modal 3: Action Error Dialog (BUG-35) */}
+      <Dialog open={Boolean(actionError)} onOpenChange={(open) => !open && setActionError(null)}>
+        <DialogContent className="sm:max-w-[380px] bg-[#18181B] border-rose-500/30 text-[#F5F5F7]">
+          <DialogHeader>
+            <DialogTitle className="text-base font-bold text-rose-400 flex items-center gap-2">
+              <AlertTriangle className="w-5 h-5 text-rose-400" />
+              <span>Admin Action Failed</span>
+            </DialogTitle>
+            <DialogDescription className="text-xs text-[#9A9AA2] mt-2 leading-relaxed">
+              {actionError}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="flex justify-end mt-3">
+            <Button
+              size="sm"
+              onClick={() => setActionError(null)}
+              className="bg-[#24242A] text-white hover:bg-[#2C2C34]"
+            >
+              Close
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

@@ -2,7 +2,7 @@
 
 import { Loader2, MessageSquare } from "lucide-react";
 import type { NextPage } from "next";
-import { useSearchParams } from "next/navigation";
+import { useSearchParams, useRouter } from "next/navigation";
 import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
 import { AnimationPlayer } from "../../components/AnimationPlayer";
@@ -18,14 +18,16 @@ import { examples } from "../../examples/code";
 import { useAnimationState } from "../../hooks/useAnimationState";
 import { useAutoCorrection } from "../../hooks/useAutoCorrection";
 import { useConversationState } from "../../hooks/useConversationState";
+import { useAuth } from "../../lib/auth-context";
 import type {
   AssistantMetadata,
   EditOperation,
   ErrorCorrectionContext,
 } from "../../types/conversation";
-import type { GenerationErrorType, StreamPhase } from "../../types/generation";
+import type { GenerationErrorType, ModelId, StreamPhase } from "../../types/generation";
 
-const MAX_CORRECTION_ATTEMPTS = 3;
+// BUG-07: Limit auto-correction to at most 1 retry and notify the user
+const MAX_CORRECTION_ATTEMPTS = 1;
 
 function GeneratePageContent() {
   const searchParams = useSearchParams();
@@ -37,9 +39,14 @@ function GeneratePageContent() {
   const initialProjectId = searchParams.get("projectId") || null;
   const initialAspectRatio = (searchParams.get("aspectRatio") as "16:9" | "9:16" | "1:1") || "16:9";
 
+  const router = useRouter();
+  const { user, isLoading: isAuthLoading } = useAuth();
+
   const [projectId, setProjectId] = useState<string | null>(initialProjectId);
   const [renderedVideoUrl, setRenderedVideoUrl] = useState<string | null>(null);
   const [aspectRatio, setAspectRatio] = useState<"16:9" | "9:16" | "1:1">(initialAspectRatio);
+  const [selectedModel, setSelectedModel] = useState<ModelId | undefined>(undefined);
+  const loadedProjectIdRef = useRef<string | null>(null);
 
   const pendingSettingsRef = useRef({
     voice: initialVoice,
@@ -93,7 +100,6 @@ function GeneratePageContent() {
     getLastUserAttachedImages,
     setPendingMessage,
     clearPendingMessage,
-    isFirstGeneration,
   } = useConversationState();
 
   // Sidebar collapse state
@@ -134,6 +140,11 @@ function GeneratePageContent() {
       (correctionPrompt: string, context: ErrorCorrectionContext) => {
         setErrorCorrection(context);
         setPrompt(correctionPrompt);
+        // BUG-07: Inform user that self-correction is running
+        addErrorMessage(
+          "Swdbot Assistent correcting prompt...",
+          "validation",
+        );
         // Get attached images from the last user message to include in retry
         const lastImages = getLastUserAttachedImages();
         setTimeout(() => {
@@ -145,7 +156,7 @@ function GeneratePageContent() {
           });
         }, 100);
       },
-      [getLastUserAttachedImages],
+      [getLastUserAttachedImages, addErrorMessage],
     ),
     onAddErrorMessage: addErrorMessage,
     onClearGenerationError: useCallback(() => setGenerationError(null), []),
@@ -168,37 +179,8 @@ function GeneratePageContent() {
     }
   }, [isStreaming, compileCode, markAsAiGenerated]);
 
-  // Load saved project from history if projectId is in query param
-  useEffect(() => {
-    if (!initialProjectId) return;
-    let isMounted = true;
-    async function loadProject() {
-      try {
-        const res = await fetch(`/api/projects?id=${encodeURIComponent(initialProjectId!)}`);
-        if (res.ok) {
-          const data = await res.json();
-          if (data.project && isMounted) {
-            const p = data.project;
-            setProjectId(p.id);
-            if (p.prompt) setPrompt(p.prompt);
-            if (p.durationInFrames) setDurationInFrames(p.durationInFrames);
-            if (p.fps) setFps(p.fps);
-            if (p.code) {
-              setCode(p.code);
-              compileCode(p.code);
-              setHasGeneratedOnce(true);
-            }
-          }
-        }
-      } catch (err) {
-        console.error("Failed to load project:", err);
-      }
-    }
-    loadProject();
-    return () => {
-      isMounted = false;
-    };
-  }, [initialProjectId, setCode, compileCode]);
+  // BUG-14: The duplicate project fetch effect was removed here.
+  // Project loading is now handled exclusively by the auto-start effect below with a loadedProjectRef guard.
 
   const saveProjectState = useCallback(
     async (codeToSave: string, promptText?: string) => {
@@ -214,6 +196,12 @@ function GeneratePageContent() {
           }
         }
 
+        // BUG-18: Save complete messages history with skills, editType, and metadata
+        // instead of getFullContext() which stripped assistant replies to literal "[Generated Code]".
+        const historyToSave = messages.filter(
+          (m) => m.role === "user" || m.role === "assistant",
+        );
+
         await fetch("/api/projects", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -224,20 +212,24 @@ function GeneratePageContent() {
             code: codeToSave,
             durationInFrames,
             fps,
-            conversationHistory: getFullContext(),
+            conversationHistory: historyToSave,
           }),
         });
       } catch (err) {
         console.warn("Auto-save project error:", err);
       }
     },
-    [projectId, prompt, durationInFrames, fps, getFullContext],
+    [projectId, prompt, durationInFrames, fps, messages],
   );
 
   const handleCodeChange = useCallback(
     (newCode: string) => {
       setCode(newCode);
       setHasGeneratedOnce(true);
+
+      // BUG-48: Reset stale runtime and generation errors on manual edit
+      setRuntimeError(null);
+      setGenerationError(null);
 
       // Mark as manual edit if not streaming (user typing)
       if (!isStreamingRef.current) {
@@ -308,7 +300,8 @@ function GeneratePageContent() {
             });
             if (res.ok) {
               const data = await res.json();
-              const reliableAudioUrl = data.remoteAudioUrl || data.audioUrl || data.apiUrl || data.fileUrl;
+              // BUG-19: Prioritize same-origin stream route (/api/audio/...) to avoid CORS and S3 expiration
+              const reliableAudioUrl = data.apiUrl || data.fileUrl || data.audioUrl || data.remoteAudioUrl;
               if (reliableAudioUrl) {
                 const completeCode = injectAudioAndCaptionsIntoCode(
                   generatedCode,
@@ -407,6 +400,13 @@ function GeneratePageContent() {
 
   // Check for pending generation from Landing Page or load existing project from history/refresh
   useEffect(() => {
+    // BUG-28: Gate generation until auth check finishes; redirect unauthenticated users to /login
+    if (isAuthLoading) return;
+    if (!user) {
+      router.push("/login");
+      return;
+    }
+
     if (hasAutoStarted) return;
 
     // A. Check for fresh generation payload stored in sessionStorage (clean URL transition)
@@ -428,6 +428,7 @@ function GeneratePageContent() {
         if (pending.duration) setDurationInFrames(pending.duration);
         if (pending.fps) setFps(pending.fps);
         if (pending.aspectRatio) setAspectRatio(pending.aspectRatio);
+        if (pending.model) setSelectedModel(pending.model as ModelId);
 
         pendingSettingsRef.current = {
           voice: pending.voice || initialVoice,
@@ -443,6 +444,7 @@ function GeneratePageContent() {
 
         setTimeout(() => {
           chatSidebarRef.current?.triggerGeneration({
+            model: pending.model as ModelId | undefined,
             attachedImages: pending.attachedImages,
             language: pending.language || initialLanguage,
             voice: pending.voice || initialVoice,
@@ -470,6 +472,10 @@ function GeneratePageContent() {
     // C. If projectId is present and NO fresh generation pending: LOAD EXISTING PROJECT (Refresh or History Modal)
     const targetProjectId = projectId || initialProjectId;
     if (targetProjectId) {
+      // BUG-14: Guard against fetching the same project multiple times across effects / re-renders
+      if (loadedProjectIdRef.current === targetProjectId) return;
+      loadedProjectIdRef.current = targetProjectId;
+
       setHasAutoStarted(true);
       setIsStreaming(false);
       setStreamPhase("idle");
@@ -527,7 +533,19 @@ function GeneratePageContent() {
     compileCode,
     setCode,
     loadConversationMessages,
+    isAuthLoading,
+    user,
+    router,
   ]);
+
+  if (isAuthLoading) {
+    return (
+      <div className="min-h-screen bg-[#0A0A0C] flex flex-col items-center justify-center gap-3 text-neutral-300">
+        <Loader2 className="w-8 h-8 animate-spin text-amber-400" />
+        <span className="text-sm font-medium tracking-wide">Memverifikasi ...</span>
+      </div>
+    );
+  }
 
   return (
     <PageLayout showLogoAsLink>
@@ -604,7 +622,19 @@ function GeneratePageContent() {
             currentCode={code}
             conversationHistory={getFullContext()}
             previouslyUsedSkills={getPreviouslyUsedSkills()}
-            isFollowUp={!isFirstGeneration}
+            // BUG-15: Only treat as follow-up if user has genuinely generated code (not demo example)
+            isFollowUp={Boolean(
+              hasGeneratedOnce &&
+              code.trim().length > 0 &&
+              code !== (examples[0]?.code || ""),
+            )}
+            initialModel={selectedModel}
+            language={pendingSettingsRef.current.language}
+            voice={pendingSettingsRef.current.voice}
+            voiceModel={pendingSettingsRef.current.voiceModel}
+            autoCaption={pendingSettingsRef.current.autoCaption}
+            aspectRatio={aspectRatio}
+            projectId={projectId}
             onMessageSent={handleMessageSent}
             onGenerationComplete={handleGenerationComplete}
             onErrorMessage={addErrorMessage}
@@ -632,7 +662,7 @@ function GeneratePageContent() {
             hideHeaderOnMobile
             codeContent={
               <CodeEditor
-                code={hasGeneratedOnce && !generationError ? code : ""}
+                code={code || ""}
                 onChange={handleCodeChange}
                 isStreaming={isStreaming}
                 streamPhase={streamPhase}
@@ -642,11 +672,6 @@ function GeneratePageContent() {
               <div className="flex flex-col h-full min-h-0 overflow-y-auto min-[1000px]:overflow-hidden [scrollbar-width:none]">
                 {renderedVideoUrl && (
                   <div className="flex items-center justify-between px-3.5 py-2 mb-2.5 rounded-xl bg-emerald-500/10 border border-emerald-500/25 text-emerald-300 text-xs shrink-0">
-                    <div className="flex items-center gap-2">
-                      <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-                      <span className="font-semibold">Rendered MP4 Ready</span>
-                      <span className="text-[10px] text-emerald-400/70 font-mono">(24h auto-clean)</span>
-                    </div>
                     <a
                       href={renderedVideoUrl}
                       download={`motion-${projectId || "video"}.mp4`}
@@ -713,11 +738,32 @@ function LoadingFallback() {
   );
 }
 
+function RequireAuth({ children }: { children: React.ReactNode }) {
+  // BUG-03: generation is a paid endpoint, so the studio now requires an active
+  // session. Send guests to /login instead of letting them hit an API error.
+  const { user, isLoading } = useAuth();
+  const router = useRouter();
+
+  useEffect(() => {
+    if (!isLoading && !user) {
+      router.replace("/login");
+    }
+  }, [isLoading, user, router]);
+
+  if (isLoading || !user) {
+    return <LoadingFallback />;
+  }
+
+  return <>{children}</>;
+}
+
 const GeneratePage: NextPage = () => {
   return (
-    <Suspense fallback={<LoadingFallback />}>
-      <GeneratePageContent />
-    </Suspense>
+    <RequireAuth>
+      <Suspense fallback={<LoadingFallback />}>
+        <GeneratePageContent />
+      </Suspense>
+    </RequireAuth>
   );
 };
 

@@ -16,19 +16,19 @@ export const VOICE_LANGUAGES: {
   {
     id: "en",
     label: "English",
-    flagUrl: "https://flagsapi.com/US/flat/64.png",
+    flagUrl: "/flags/us.svg",
     heygenName: "English",
   },
   {
     id: "ms",
     label: "Malay",
-    flagUrl: "https://flagsapi.com/MY/flat/64.png",
+    flagUrl: "/flags/my.svg",
     heygenName: "Malay",
   },
   {
     id: "id",
     label: "Indonesian",
-    flagUrl: "https://flagsapi.com/ID/flat/64.png",
+    flagUrl: "/flags/id.svg",
     heygenName: "Indonesian",
   },
 ];

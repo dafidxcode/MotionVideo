@@ -23,7 +23,7 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en" className="h-full w-full overflow-hidden">
-      <body className="bg-background h-full w-full overflow-hidden select-none">
+      <body className="bg-background h-full w-full overflow-hidden">
         <AuthProvider>{children}</AuthProvider>
       </body>
     </html>

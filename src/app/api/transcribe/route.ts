@@ -1,7 +1,37 @@
 import { NextResponse } from "next/server";
+import { requireActiveUser } from "@/lib/auth";
+import { checkRateLimit } from "@/lib/rate-limit";
+
+// Maximum audio payload for transcription: 15MB
+const MAX_AUDIO_BYTES = 50 * 1024 * 1024;
 
 export async function POST(req: Request) {
   try {
+    // BUG-03: this endpoint previously had NO authentication at all while
+    // proxying requests to the paid OpenAI Whisper API.
+    const guard = await requireActiveUser(req);
+    if (!guard.ok || !guard.email) {
+      return NextResponse.json(
+        { error: guard.error || "Authentication required. Please sign in again." },
+        { status: guard.status },
+      );
+    }
+
+    // Rate limiting (BUG-03): max 15 transcription requests per minute per user
+    const rateLimit = checkRateLimit(`transcribe:${guard.email}`, {
+      windowMs: 60_000,
+      maxRequests: 15,
+    });
+    if (!rateLimit.allowed) {
+      return NextResponse.json(
+        {
+          error: "Too many transcription requests. Please wait a moment and try again.",
+          retryAfterMs: rateLimit.resetMs,
+        },
+        { status: 429 },
+      );
+    }
+
     const apiKey = process.env.OPENAI_API_KEY;
     if (!apiKey) {
       return NextResponse.json(
@@ -36,6 +66,22 @@ export async function POST(req: Request) {
           { status: 400 },
         );
       }
+    }
+
+    if (!fileBuffer || fileBuffer.length === 0) {
+      return NextResponse.json(
+        { error: "Audio file is empty." },
+        { status: 400 },
+      );
+    }
+
+    if (fileBuffer.length > MAX_AUDIO_BYTES) {
+      return NextResponse.json(
+        {
+          error: `Audio file exceeds maximum size limit of ${MAX_AUDIO_BYTES / (1024 * 1024)}MB.`,
+        },
+        { status: 413 },
+      );
     }
 
     const whisperFormData = new FormData();

@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { z } from "zod";
 import { CompositionProps } from "../../types/constants";
 import { getProgress, renderVideo } from "../lambda/api";
@@ -43,15 +43,45 @@ export const useRendering = (
     status: "init",
   });
 
+  const abortControllerRef = useRef<AbortController | null>(null);
+
+  // BUG-33: Abort ongoing poll loop on unmount
+  useEffect(() => {
+    return () => {
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+      }
+    };
+  }, []);
+
+  const undo = useCallback(() => {
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      abortControllerRef.current = null;
+    }
+    setState({ status: "init" });
+  }, []);
+
   const renderMedia = useCallback(async () => {
+    // BUG-33: Clean previous polling loop before starting a new one
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+
     setState({
       status: "invoking",
     });
+
     try {
       const { renderId, bucketName } = await renderVideo({ inputProps, projectId });
+      if (controller.signal.aborted) return;
+
       if (typeof window !== "undefined") {
         window.dispatchEvent(new Event("swdbot-refresh-user"));
       }
+
       setState({
         status: "rendering",
         progress: 0,
@@ -61,12 +91,26 @@ export const useRendering = (
 
       let pending = true;
 
-      while (pending) {
+      while (pending && !controller.signal.aborted) {
+        // Pause polling when the document is hidden/backgrounded
+        while (
+          typeof document !== "undefined" &&
+          document.visibilityState === "hidden" &&
+          !controller.signal.aborted
+        ) {
+          await wait(1000);
+        }
+
+        if (controller.signal.aborted) break;
+
         const result = await getProgress({
           id: renderId,
           bucketName: bucketName,
           projectId,
         });
+
+        if (controller.signal.aborted) break;
+
         switch (result.type) {
           case "error": {
             setState({
@@ -98,17 +142,15 @@ export const useRendering = (
         }
       }
     } catch (err) {
-      setState({
-        status: "error",
-        error: err as Error,
-        renderId: null,
-      });
+      if (!controller.signal.aborted) {
+        setState({
+          status: "error",
+          error: err as Error,
+          renderId: null,
+        });
+      }
     }
-  }, [inputProps]);
-
-  const undo = useCallback(() => {
-    setState({ status: "init" });
-  }, []);
+  }, [inputProps, projectId]);
 
   return useMemo(() => {
     return {

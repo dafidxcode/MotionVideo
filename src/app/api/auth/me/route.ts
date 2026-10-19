@@ -13,52 +13,25 @@ export async function GET(req: NextRequest) {
   try {
     const sessionCookie = req.cookies.get(COOKIE_NAME)?.value;
     const authHeader = req.headers.get("authorization");
-    const apiKeyHeader =
-      req.headers.get("x-user-api-key") || req.headers.get("x-api-key");
 
     let token = sessionCookie;
     if (!token && authHeader?.startsWith("Bearer ")) {
       token = authHeader.substring(7);
     }
 
+    // BUG-02: the `x-user-api-key` / `x-api-key` legacy_key lookup has been
+    // removed. Anyone holding a profile legacy_key could authenticate without a
+    // signed session cookie. Authentication is now session-cookie (or Bearer
+    // session token) only.
     let emailToLookup: string | undefined;
+    let verifiedExp: number | undefined;
 
     if (token) {
       const verified = verifySessionToken(token);
       if (verified.valid && verified.email) {
         emailToLookup = verified.email;
+        verifiedExp = verified.exp;
       }
-    }
-
-    // Fallback: If apiKeyHeader is provided, lookup profile by legacy_key directly
-    if (!emailToLookup && apiKeyHeader) {
-      const supabaseUrl =
-        process.env.SUPABASE_URL ||
-        process.env.NEXT_PUBLIC_SUPABASE_URL ||
-        "https://mqlyjlqusvhrnxobwplt.supabase.co";
-      const apiKey =
-        process.env.SERVICE_ROLE_KEY ||
-        process.env.SUPABASE_ANON_KEY ||
-        "";
-
-      try {
-        const res = await fetch(
-          `${supabaseUrl}/rest/v1/profiles?legacy_key=eq.${encodeURIComponent(apiKeyHeader.trim())}&select=*`,
-          {
-            headers: {
-              apikey: apiKey,
-              Authorization: `Bearer ${apiKey}`,
-            },
-            cache: "no-store",
-          },
-        );
-        if (res.ok) {
-          const rows = await res.json();
-          if (Array.isArray(rows) && rows[0]?.email) {
-            emailToLookup = rows[0].email;
-          }
-        }
-      } catch { }
     }
 
     if (!emailToLookup) {
@@ -95,19 +68,30 @@ export async function GET(req: NextRequest) {
       isAdmin,
     };
 
-    const newToken = createSessionToken(user);
+    const { key: _legacyKey, ...safeUser } = user;
+    void _legacyKey;
     const response = NextResponse.json({
       authenticated: true,
-      user,
+      user: safeUser,
       quota: user.quota,
     });
-    response.cookies.set(COOKIE_NAME, newToken, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      sameSite: "lax",
-      maxAge: 7 * 24 * 60 * 60,
-      path: "/",
-    });
+
+    // BUG-51: Only re-issue cookie if missing or within 48h of expiration
+    const shouldRefreshCookie =
+      !sessionCookie ||
+      !verifiedExp ||
+      verifiedExp * 1000 - Date.now() < 48 * 60 * 60 * 1000;
+
+    if (shouldRefreshCookie) {
+      const newToken = createSessionToken(user);
+      response.cookies.set(COOKIE_NAME, newToken, {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === "production",
+        sameSite: "lax",
+        maxAge: 7 * 24 * 60 * 60,
+        path: "/",
+      });
+    }
     return response;
   } catch (err: any) {
     console.error("[Auth Me Route Error]", err);

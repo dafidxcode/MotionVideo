@@ -8,9 +8,14 @@ import {
 } from "@/lib/llm-provider";
 import { generateObject, generateText, streamText } from "ai";
 import { z } from "zod";
-import { verifySessionToken } from "@/lib/auth";
-import { chargeUserCredits } from "@/lib/credits";
+import { requireActiveUser } from "@/lib/auth";
+import {
+  chargeUserCredits,
+  getMotionStudioSettings,
+  refundUserCredits,
+} from "@/lib/credits";
 import { logRuntime } from "@/lib/runtime-logger";
+import { checkRateLimit } from "@/lib/rate-limit";
 
 // Suppress AI SDK unsupported setting warnings for OpenAI-compatible proxies
 if (typeof globalThis !== "undefined") {
@@ -263,8 +268,8 @@ function applyEdits(
     // Get line number before applying edit
     const lineNumber = getLineNumber(result, old_string);
 
-    // Apply the edit
-    result = result.replace(old_string, new_string);
+    // Apply the edit (BUG-20: use replacer function to prevent $&, $`, $', $$ corruption)
+    result = result.replace(old_string, () => new_string);
 
     // Store enriched edit with line number
     enrichedEdits.push({
@@ -351,75 +356,42 @@ export async function POST(req: Request) {
     projectId,
   }: GenerateRequest = await req.json();
 
-  // ── Authentication & Credit Deduction ─────────────────────────────────────
-  const cookieHeader = req.headers.get("cookie") || "";
-  const authHeader = req.headers.get("authorization");
-  let token = "";
-  if (cookieHeader) {
-    const match = cookieHeader.match(/swdbot_session=([^;]+)/);
-    if (match) token = match[1];
-  }
-  if (!token && authHeader?.startsWith("Bearer ")) {
-    token = authHeader.substring(7);
-  }
-
-  let userEmail: string | undefined;
-  if (token) {
-    const verified = verifySessionToken(token);
-    if (verified.valid && verified.email) {
-      userEmail = verified.email;
-    }
-  }
-
-  // Deduct real credits via Supabase
-  if (userEmail) {
-    const action = isFollowUp ? "chatbot_llm" : "initial_generation";
-    const durationFrames = duration || 300;
-    const currentFps = fps || 30;
-    const durationSeconds = Math.max(10, Math.round(durationFrames / currentFps));
-    // 2 credits per 10 seconds: (10s = 2, 20s = 4, 30s = 6, 60s/1m = 12, 120s/2m = 24)
-    const ratePer10s = 2;
-    const calculatedStep1Credits = Math.max(
-      ratePer10s,
-      Math.round((durationSeconds / 10) * ratePer10s),
+  // â”€â”€ Authentication & Account Status (BUG-03 / BUG-06) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // Previously the endpoint read the session, and if it was absent simply ran
+  // as "Guest User" with zero credits charged. Paid generation now requires a
+  // valid session AND an active (non-blocked, VIP, unexpired) account.
+  const guard = await requireActiveUser(req);
+  if (!guard.ok || !guard.email) {
+    return new Response(
+      JSON.stringify({
+        error: guard.error || "Authentication required.",
+        type: guard.status === 401 ? "unauthenticated" : "forbidden",
+      }),
+      { status: guard.status, headers: { "Content-Type": "application/json" } },
     );
+  }
+  const userEmail = guard.email;
 
-    const chargeResult = await chargeUserCredits({
-      email: userEmail,
-      action,
-      overrideAmount: !isFollowUp ? calculatedStep1Credits : undefined,
-      description: isFollowUp
-        ? `Chatbot AI Revision: "${prompt.slice(0, 60)}"`
-        : `Step 1 Motion Generation (${durationSeconds}s, ${calculatedStep1Credits} Cr): "${prompt.slice(0, 60)}"`,
-      metadata: {
-        model,
-        isFollowUp,
-        language,
-        durationSeconds,
-        durationFrames,
-        fps: currentFps,
-      },
-    });
-
-    if (!chargeResult.success) {
-      return new Response(
-        JSON.stringify({
-          error: chargeResult.error || "Insufficient balance for generation.",
-          type: "insufficient_quota",
-          remainingQuota: chargeResult.previousQuota,
-        }),
-        {
-          status: 402,
-          headers: { "Content-Type": "application/json" },
-        },
-      );
-    }
+  // Rate limiting (BUG-03): max 30 generation requests per minute per user
+  const rateLimit = checkRateLimit(`generate:${userEmail}`, {
+    windowMs: 60_000,
+    maxRequests: 30,
+  });
+  if (!rateLimit.allowed) {
+    return new Response(
+      JSON.stringify({
+        error: "Too many generation requests. Please slow down.",
+        type: "rate_limited",
+        retryAfterMs: rateLimit.resetMs,
+      }),
+      { status: 429, headers: { "Content-Type": "application/json" } },
+    );
   }
 
   logRuntime({
     action: isFollowUp ? "CHATBOT MOTION REVISION" : "MOTION GRAPHICS GENERATION",
     status: "START",
-    userEmail: userEmail || "Guest User",
+    userEmail,
     projectId,
     details: {
       model,
@@ -433,7 +405,7 @@ export async function POST(req: Request) {
     },
   });
 
-  // Resolve LLM provider + model — Anthropic Claude API:
+  // Resolve LLM provider + model â€” Anthropic Claude API:
   let resolved;
   try {
     resolved = resolveLlm(model);
@@ -548,7 +520,74 @@ export async function POST(req: Request) {
     );
   }
 
-  // Construct strict language instruction
+  // â”€â”€ Credit Deduction (BUG-07 / BUG-10) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// BUG-07: credits were deducted BEFORE prompt validation and before any LLM
+// call. An invalid prompt or an LLM failure meant the user paid for nothing.
+// The charge now happens only after validation passed and the provider is
+// reachable. BUG-10: the cost came from a hardcoded `ratePer10s = 2` instead of
+// the admin-configurable Motion Studio settings.
+const action = isFollowUp ? "chatbot_llm" : "initial_generation";
+const durationFrames = duration || 300;
+const currentFps = fps || 30;
+const durationSeconds = Math.max(10, Math.round(durationFrames / currentFps));
+const motionSettings = await getMotionStudioSettings();
+// initialGenerationCost is the admin-configurable rate per 10 seconds
+// (default 2 => 10s = 2, 20s = 4, 30s = 6, 60s = 12, 120s = 24).
+const ratePer10s = Number(motionSettings.initialGenerationCost) || 2;
+const calculatedStep1Credits = Math.max(
+  ratePer10s,
+  Math.round((durationSeconds / 10) * ratePer10s),
+);
+
+const chargeResult = await chargeUserCredits({
+  email: userEmail,
+  action,
+  overrideAmount: !isFollowUp ? calculatedStep1Credits : undefined,
+  description: isFollowUp
+    ? `Chatbot AI Revision: "${prompt.slice(0, 60)}"`
+    : `Step 1 Motion Generation (${durationSeconds}s, ${calculatedStep1Credits} Cr): "${prompt.slice(0, 60)}"`,
+  metadata: {
+    model,
+    isFollowUp,
+    language,
+    durationSeconds,
+    durationFrames,
+    fps: currentFps,
+  },
+});
+
+if (!chargeResult.success) {
+  const isQuotaIssue = /insufficient balance/i.test(chargeResult.error || "");
+  return new Response(
+    JSON.stringify({
+      error: chargeResult.error || "Insufficient balance for generation.",
+      type: isQuotaIssue ? "insufficient_quota" : "charge_failed",
+      remainingQuota: chargeResult.previousQuota,
+    }),
+    {
+      status: isQuotaIssue ? 402 : 409,
+      headers: { "Content-Type": "application/json" },
+    },
+  );
+}
+
+// The exact amount charged, used to refund if generation fails downstream.
+const chargedAmount = chargeResult.chargedAmount;
+
+const refundOnFailure = async (context: string) => {
+  try {
+    await refundUserCredits({
+      email: userEmail,
+      amount: chargedAmount,
+      reason: `Refund: ${context}`,
+      metadata: { isFollowUp, model: modelName },
+    });
+  } catch (err) {
+    console.error("[Generate] Refund failed:", err);
+  }
+};
+
+// Construct strict language instruction
   let languageInstruction = "";
   if (language === "en") {
     languageInstruction = `\n\n## TARGET LANGUAGE: ENGLISH (CRITICAL)\n- The user selected English.\n- ALL on-screen kinetic typography, titles, facts, badges, cards, and especially VOICEOVER_SCRIPT MUST BE 100% IN NATURAL, IMPACTFUL CINEMATIC ENGLISH.\n- Do NOT use Indonesian or Malay words anywhere in the animation or narration.\n- Maintain high-energy, punchy English copywriting.`;
@@ -761,6 +800,7 @@ Analyze the request and decide: use targeted edits (type: "edit") for small chan
         const result = applyEdits(currentCode, response.edits);
         if (!result.success) {
           // If edits fail, return error with the failed edit details
+          await refundOnFailure("edit target not found or ambiguous");
           return new Response(
             JSON.stringify({
               error: result.error,
@@ -782,6 +822,7 @@ Analyze the request and decide: use targeted edits (type: "edit") for small chan
         console.log("Using full code replacement");
       } else {
         // Invalid response - missing required fields
+        await refundOnFailure("invalid AI response");
         return new Response(
           JSON.stringify({
             error: "Invalid AI response: missing required fields",
@@ -806,7 +847,7 @@ Analyze the request and decide: use targeted edits (type: "edit") for small chan
       logRuntime({
         action: "CHATBOT MOTION REVISION",
         status: "SUCCESS",
-        userEmail: userEmail || "Guest User",
+        userEmail,
         projectId,
         details: {
           editType,
@@ -824,11 +865,12 @@ Analyze the request and decide: use targeted edits (type: "edit") for small chan
       logRuntime({
         action: "CHATBOT MOTION REVISION",
         status: "FAILED",
-        userEmail: userEmail || "Guest User",
+        userEmail,
         projectId,
         error,
       });
       console.error("Error in follow-up edit:", error);
+      await refundOnFailure("chatbot revision failed");
       return new Response(
         JSON.stringify({
           error: "Something went wrong while processing the edit request.",
@@ -918,29 +960,47 @@ Analyze the request and decide: use targeted edits (type: "edit") for small chan
 
     const stream = new ReadableStream({
       async start(controller) {
-        // Send metadata event first
-        controller.enqueue(encoder.encode(metadataEvent));
+        try {
+          // Send metadata event first
+          controller.enqueue(encoder.encode(metadataEvent));
 
-        // Then pipe through the original stream
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          controller.enqueue(value);
+          // Then pipe through the original stream
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            controller.enqueue(value);
+          }
+          logRuntime({
+            action: "MOTION GRAPHICS GENERATION",
+            status: "SUCCESS",
+            userEmail,
+            projectId,
+            details: {
+              provider,
+              model: modelName,
+              detectedSkills,
+              aspectRatio,
+              language,
+            },
+          });
+          controller.close();
+        } catch (streamError) {
+          // BUG-07: a mid-stream failure means the user received nothing, so
+          // the credits taken up front must be returned.
+          logRuntime({
+            action: "MOTION GRAPHICS GENERATION",
+            status: "FAILED",
+            userEmail,
+            projectId,
+            error: streamError,
+          });
+          await refundOnFailure("generation stream failed");
+          try {
+            controller.error(streamError);
+          } catch {
+            // Controller may already be closed/errored.
+          }
         }
-        logRuntime({
-          action: "MOTION GRAPHICS GENERATION",
-          status: "SUCCESS",
-          userEmail: userEmail || "Guest User",
-          projectId,
-          details: {
-            provider,
-            model: modelName,
-            detectedSkills,
-            aspectRatio,
-            language,
-          },
-        });
-        controller.close();
       },
     });
 
@@ -951,11 +1011,12 @@ Analyze the request and decide: use targeted edits (type: "edit") for small chan
     logRuntime({
       action: "MOTION GRAPHICS GENERATION",
       status: "FAILED",
-      userEmail: userEmail || "Guest User",
+      userEmail,
       projectId,
       error,
     });
     console.error("Error generating code:", error);
+    await refundOnFailure("generation failed before streaming");
     return new Response(
       JSON.stringify({
         error: `Something went wrong while trying to reach ${provider} APIs.`,

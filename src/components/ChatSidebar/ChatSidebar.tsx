@@ -17,6 +17,14 @@ import {
 } from "@/types/generation";
 import { PanelLeftClose, PanelLeftOpen, RotateCcw } from "lucide-react";
 import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
   forwardRef,
   useEffect,
   useImperativeHandle,
@@ -38,6 +46,7 @@ export interface ChatSidebarRef {
     aspectRatio?: string;
     duration?: number;
     fps?: number;
+    model?: ModelId;
   }) => void;
 }
 
@@ -83,6 +92,14 @@ interface ChatSidebarProps {
   fps?: number;
   durationInFrames?: number;
   currentFrame?: number;
+  // Active settings to preserve across manual revisions (BUG-16 + BUG-17)
+  initialModel?: ModelId;
+  language?: string;
+  voice?: string;
+  voiceModel?: string;
+  autoCaption?: boolean;
+  aspectRatio?: string;
+  projectId?: string | null;
 }
 
 export const ChatSidebar = forwardRef<ChatSidebarRef, ChatSidebarProps>(
@@ -113,11 +130,27 @@ export const ChatSidebar = forwardRef<ChatSidebarRef, ChatSidebarProps>(
       fps = 30,
       durationInFrames = 150,
       currentFrame = 0,
+      initialModel,
+      language,
+      voice,
+      voiceModel,
+      autoCaption,
+      aspectRatio,
+      projectId,
     },
     ref,
   ) {
-    const [model, setModel] = useState<ModelId>(MODELS[0].id);
+    const [model, setModel] = useState<ModelId>(initialModel || MODELS[0].id);
+    const [showResetDialog, setShowResetDialog] = useState(false);
+    const [isDeletingProject, setIsDeletingProject] = useState(false);
     const promptRef = useRef<string>("");
+
+    // Sync model if initialModel changes (BUG-16)
+    useEffect(() => {
+      if (initialModel) {
+        setModel(initialModel);
+      }
+    }, [initialModel]);
 
     const { isLoading, runGeneration } = useGenerationApi();
 
@@ -136,15 +169,30 @@ export const ChatSidebar = forwardRef<ChatSidebarRef, ChatSidebarProps>(
       aspectRatio?: string;
       duration?: number;
       fps?: number;
+      model?: ModelId;
     }) => {
       const currentPrompt = promptRef.current;
       if (!currentPrompt.trim()) return;
 
       onPromptChange(""); // Clear input immediately
 
+      // BUG-17: Merge active settings so manual chat messages keep the user's language, ratio, duration, and voice
+      const effectiveOptions = {
+        language: options?.language ?? language,
+        aspectRatio: options?.aspectRatio ?? aspectRatio,
+        duration: options?.duration ?? durationInFrames,
+        fps: options?.fps ?? fps,
+        voice: options?.voice ?? voice,
+        voiceModel: options?.voiceModel ?? voiceModel,
+        autoCaption: options?.autoCaption ?? autoCaption,
+        ...options,
+      };
+
+      const targetModel = options?.model || model;
+
       await runGeneration(
         currentPrompt,
-        model,
+        targetModel,
         {
           currentCode,
           conversationHistory,
@@ -165,7 +213,7 @@ export const ChatSidebar = forwardRef<ChatSidebarRef, ChatSidebarProps>(
           onPendingMessage,
           onClearPendingMessage,
         },
-        options,
+        effectiveOptions,
       );
     };
 
@@ -203,15 +251,7 @@ export const ChatSidebar = forwardRef<ChatSidebarRef, ChatSidebarProps>(
                 <Button
                   variant="ghost"
                   size="sm"
-                  onClick={() => {
-                    if (
-                      window.confirm(
-                        "Start over? This will reset your animation.",
-                      )
-                    ) {
-                      window.location.href = "/";
-                    }
-                  }}
+                  onClick={() => setShowResetDialog(true)}
                   title="Start over"
                   className="text-[#9A9AA2] hover:text-[#F5F5F7] hover:bg-[#1F1F23] text-xs gap-1.5 h-7 px-2 cursor-pointer rounded-lg"
                 >
@@ -229,6 +269,64 @@ export const ChatSidebar = forwardRef<ChatSidebarRef, ChatSidebarProps>(
                 </Button>
               </div>
             </div>
+
+            {/* Reset Confirmation Dialog (BUG-35 + BUG-44) */}
+            <Dialog open={showResetDialog} onOpenChange={setShowResetDialog}>
+              <DialogContent className="bg-[#18181B] border border-[#28282C] text-[#F5F5F7] max-w-md">
+                <DialogHeader>
+                  <DialogTitle className="text-base font-semibold text-white">
+                    Reset Animation & Chat
+                  </DialogTitle>
+                  <DialogDescription className="text-sm text-[#9A9AA2]">
+                    How would you like to proceed? You can start a new animation while keeping this project in history, or permanently delete it.
+                  </DialogDescription>
+                </DialogHeader>
+                <DialogFooter className="flex flex-col-reverse sm:flex-row gap-2 mt-4 sm:justify-end">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    disabled={isDeletingProject}
+                    onClick={() => setShowResetDialog(false)}
+                    className="text-[#9A9AA2] hover:text-white"
+                  >
+                    Cancel
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    disabled={isDeletingProject}
+                    onClick={() => {
+                      window.location.href = "/generate";
+                    }}
+                    className="bg-[#28282C] hover:bg-[#333338] text-white"
+                  >
+                    Start Fresh
+                  </Button>
+                  {projectId && (
+                    <Button
+                      variant="destructive"
+                      size="sm"
+                      disabled={isDeletingProject}
+                      onClick={async () => {
+                        try {
+                          setIsDeletingProject(true);
+                          await fetch(`/api/projects?id=${encodeURIComponent(projectId)}`, {
+                            method: "DELETE",
+                          });
+                        } catch (err) {
+                          console.error("Failed to delete project during reset:", err);
+                        } finally {
+                          window.location.href = "/generate";
+                        }
+                      }}
+                      className="bg-red-600 hover:bg-red-500 text-white"
+                    >
+                      {isDeletingProject ? "Deleting..." : "Delete & Start Over"}
+                    </Button>
+                  )}
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
 
             {/* Messages */}
             <ChatHistory messages={messages} pendingMessage={pendingMessage} />

@@ -15,48 +15,41 @@ import { COMP_NAME } from "../../../../../types/constants";
 import { RenderRequest } from "../../../../../types/schema";
 import { executeApi } from "../../../../helpers/api-response";
 
-import { verifySessionToken } from "../../../../lib/auth";
-import { chargeUserCredits } from "../../../../lib/credits";
+import { requireActiveUser } from "../../../../lib/auth";
+import {
+  chargeUserCredits,
+  refundUserCredits,
+} from "../../../../lib/credits";
+import { checkRateLimit } from "../../../../lib/rate-limit";
 
 export const POST = executeApi<RenderMediaOnLambdaOutput, typeof RenderRequest>(
   RenderRequest,
   async (req, body) => {
-    // ── Authentication & Credit Deduction ───────────────────────────────────
-    const cookieHeader = req.headers.get("cookie") || "";
-    const authHeader = req.headers.get("authorization");
-    let token = "";
-    if (cookieHeader) {
-      const match = cookieHeader.match(/swdbot_session=([^;]+)/);
-      if (match) token = match[1];
+    // ── Authentication & Account Status (BUG-03 / BUG-06) ──────────────────
+    // Previously a missing/invalid session silently fell through as
+    // "Guest User" and rendered for free.
+    const guard = await requireActiveUser(req);
+    if (!guard.ok || !guard.email) {
+      throw new Error(
+        guard.error || "Authentication required. Please sign in again.",
+      );
     }
-    if (!token && authHeader?.startsWith("Bearer ")) {
-      token = authHeader.substring(7);
-    }
+    const userEmail = guard.email;
 
-    let userEmail: string | undefined;
-    if (token) {
-      const verified = verifySessionToken(token);
-      if (verified.valid && verified.email) {
-        userEmail = verified.email;
-      }
-    }
-
-    if (userEmail) {
-      const chargeResult = await chargeUserCredits({
-        email: userEmail,
-        action: "aws_render",
-        description: "Video Rendering",
-        metadata: { composition: COMP_NAME },
-      });
-
-      if (!chargeResult.success) {
-        throw new Error(
-          chargeResult.error ||
-          "Insufficient credits! Rendering video failed.",
-        );
-      }
+    // Rate limiting (BUG-03): max 5 render requests per minute per user
+    const rateLimit = checkRateLimit(`render:${userEmail}`, {
+      windowMs: 60_000,
+      maxRequests: 5,
+    });
+    if (!rateLimit.allowed) {
+      throw new Error(
+        "Too many render requests. Please wait a moment before starting another render.",
+      );
     }
 
+    // ── AWS Credential Check BEFORE charging (BUG-08) ─────────────────────
+    // The render cost was deducted first, so a deployment without AWS keys
+    // charged the user for a render that could never start.
     const hasAwsKey =
       Boolean(process.env.AWS_ACCESS_KEY_ID || process.env.REMOTION_AWS_ACCESS_KEY_ID);
     const hasAwsSecret =
@@ -68,13 +61,30 @@ export const POST = executeApi<RenderMediaOnLambdaOutput, typeof RenderRequest>(
       );
     }
 
+    // ── Credit Deduction ───────────────────────────────────────────────────
+    const chargeResult = await chargeUserCredits({
+      email: userEmail,
+      action: "aws_render",
+      description: "Video Rendering",
+      metadata: { composition: COMP_NAME },
+    });
+
+    if (!chargeResult.success) {
+      throw new Error(
+        chargeResult.error ||
+        "Insufficient credits! Rendering video failed.",
+      );
+    }
+
+    const chargedAmount = chargeResult.chargedAmount;
+
     const { logRuntime } = await import("@/lib/runtime-logger");
     const projId = body.projectId || "unspecified";
 
     logRuntime({
       action: "VIDEO RENDER (AWS LAMBDA)",
       status: "START",
-      userEmail: userEmail || "Guest User",
+      userEmail,
       projectId: projId,
       details: {
         composition: COMP_NAME,
@@ -83,7 +93,7 @@ export const POST = executeApi<RenderMediaOnLambdaOutput, typeof RenderRequest>(
     });
 
     try {
-      const sanitizedUser = (userEmail || "user")
+      const sanitizedUser = userEmail
         .split("@")[0]
         .replace(/[^a-zA-Z0-9_-]/g, "");
       const uniqueFileName = `swdbot-motion-${sanitizedUser}-${Date.now()}.mp4`;
@@ -132,7 +142,7 @@ export const POST = executeApi<RenderMediaOnLambdaOutput, typeof RenderRequest>(
       logRuntime({
         action: "VIDEO RENDER (AWS LAMBDA)",
         status: "SUCCESS",
-        userEmail: userEmail || "Guest User",
+        userEmail,
         projectId: projId,
         details: {
           renderId: result.renderId,
@@ -146,10 +156,21 @@ export const POST = executeApi<RenderMediaOnLambdaOutput, typeof RenderRequest>(
       logRuntime({
         action: "VIDEO RENDER (AWS LAMBDA)",
         status: "FAILED",
-        userEmail: userEmail || "Guest User",
+        userEmail,
         projectId: projId,
         error: renderError,
       });
+      // BUG-08: the render never started, so refund the render credits.
+      try {
+        await refundUserCredits({
+          email: userEmail,
+          amount: chargedAmount,
+          reason: "Refund: AWS Lambda render failed",
+          metadata: { composition: COMP_NAME },
+        });
+      } catch (refundError) {
+        console.error("[Render] Refund failed:", refundError);
+      }
       throw renderError;
     }
   },

@@ -45,22 +45,36 @@ export const ErrorDisplay: React.FC<ErrorDisplayProps> = ({
   children,
   className,
 }) => {
+  const [showFullError, setShowFullError] = React.useState(false);
   const styles = sizeStyles[size];
+
+  // BUG-54: Truncate long raw LLM error messages to prevent layout breaking or prompt leaking
+  const isLongError = error && error.length > 350;
+  const displayError = isLongError && !showFullError ? `${error.slice(0, 350)}...` : error;
 
   if (variant === "fullscreen") {
     return (
-      <div className="w-full aspect-video max-h-[calc(100%-80px)] flex flex-col justify-center items-center bg-background-elevated rounded-lg overflow-hidden shadow-[0_0_60px_rgba(0,0,0,0.5)]">
-        <div className="flex flex-col items-center gap-4 max-w-[80%] p-8">
-          <div className="flex items-center justify-center w-12 h-12 rounded-full bg-destructive/10">
-            <AlertCircle className="h-6 w-6 text-destructive" />
+      <div className="w-full h-full min-h-[220px] max-h-full flex flex-col justify-center items-center bg-background-elevated rounded-lg overflow-hidden shadow-[0_0_60px_rgba(0,0,0,0.5)] p-4 sm:p-6">
+        <div className="flex flex-col items-center gap-3 max-w-[90%] w-full overflow-hidden">
+          <div className="flex items-center justify-center w-10 h-10 rounded-full bg-destructive/10 shrink-0">
+            <AlertCircle className="h-5 w-5 text-destructive" />
           </div>
           {title && (
-            <h3 className="text-lg font-semibold text-foreground">{title}</h3>
+            <h3 className="text-base sm:text-lg font-semibold text-foreground text-center">{title}</h3>
           )}
-          <div className="bg-background-error/50 border border-destructive/30 rounded-lg p-4 max-w-full overflow-auto">
-            <pre className="text-sm text-destructive font-mono whitespace-pre-wrap break-words text-center">
-              {error}
+          <div className="bg-background-error/50 border border-destructive/30 rounded-lg p-3 sm:p-4 max-w-full w-full max-h-[50vh] overflow-y-auto">
+            <pre className="text-xs sm:text-sm text-destructive font-mono whitespace-pre-wrap break-words text-left">
+              {displayError}
             </pre>
+            {isLongError && (
+              <button
+                type="button"
+                onClick={() => setShowFullError(!showFullError)}
+                className="mt-2 text-xs font-sans text-destructive/80 hover:text-destructive underline cursor-pointer block"
+              >
+                {showFullError ? "Hide full details" : `Show full error details (${error.length} characters)`}
+              </button>
+            )}
           </div>
           {children}
         </div>
@@ -75,7 +89,16 @@ export const ErrorDisplay: React.FC<ErrorDisplayProps> = ({
         className={cn("flex items-center justify-between", className)}
       >
         <AlertDescription className={styles.description}>
-          {error}
+          {displayError}
+          {isLongError && (
+            <button
+              type="button"
+              onClick={() => setShowFullError(!showFullError)}
+              className="ml-2 text-xs underline cursor-pointer opacity-80 hover:opacity-100"
+            >
+              {showFullError ? "less" : "more"}
+            </button>
+          )}
         </AlertDescription>
         {onDismiss && (
           <Button
@@ -106,7 +129,18 @@ export const ErrorDisplay: React.FC<ErrorDisplayProps> = ({
           "font-mono whitespace-pre-wrap break-words",
         )}
       >
-        {error}
+        {displayError}
+        {isLongError && (
+          <div>
+            <button
+              type="button"
+              onClick={() => setShowFullError(!showFullError)}
+              className="mt-1 text-xs font-sans underline cursor-pointer opacity-80 hover:opacity-100 block"
+            >
+              {showFullError ? "Show less" : `Show full error details (${error.length} characters)`}
+            </button>
+          </div>
+        )}
       </AlertDescription>
       {children}
     </Alert>

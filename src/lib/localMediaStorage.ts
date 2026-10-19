@@ -235,24 +235,34 @@ export function cleanupExpiredLocalMedia(): { deletedCount: number } {
   return { deletedCount };
 }
 
-let schedulerStarted = false;
+const GLOBAL_SCHEDULER_KEY = "__swdbot_media_cleanup_active__";
 
 /**
  * Start periodic 24-hour media cleanup scheduler (runs on start and every 60 minutes).
+ * Uses a process-wide singleton with .unref() so it does not leak intervals across HMR (BUG-24).
  */
 export function startMediaCleanupScheduler() {
-  if (schedulerStarted) return;
-  schedulerStarted = true;
+  if (typeof window !== "undefined") return;
 
-  // Run initial cleanup after 3 seconds
-  setTimeout(() => {
-    cleanupExpiredLocalMedia();
-  }, 3000);
+  const g = globalThis as unknown as Record<string, boolean | undefined>;
+  if (g[GLOBAL_SCHEDULER_KEY]) return;
+  g[GLOBAL_SCHEDULER_KEY] = true;
 
-  // Periodic check every 60 minutes
-  setInterval(() => {
-    cleanupExpiredLocalMedia();
+  // Run initial cleanup deferred by 5 seconds
+  const initialTimer = setTimeout(() => {
+    try {
+      cleanupExpiredLocalMedia();
+    } catch {}
+  }, 5000);
+  initialTimer.unref?.();
+
+  // Periodic check every 60 minutes with unref so it won't prevent graceful shutdown
+  const intervalTimer = setInterval(() => {
+    try {
+      cleanupExpiredLocalMedia();
+    } catch {}
   }, 60 * 60 * 1000);
+  intervalTimer.unref?.();
 
-  console.log(`[LocalMedia] 24-Hour retention scheduler active (auto-clean every 60 mins).`);
+  console.log(`[LocalMedia] 24-Hour retention scheduler active (unref'd singleton, auto-clean every 60 mins).`);
 }
